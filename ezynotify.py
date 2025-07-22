@@ -117,7 +117,6 @@ def process_row(row):
     existing_found = row.get("foundKeyword") or []
     updates_log = row.get("Updates") or []
     telegram_id = row.get("telegramID")
-    should_send_updates = row.get("shouldSendUpdates", False)
     should_send_detailed = row.get("shouldSendDetailedUpdates", False)
     check_updates = row.get("checkUpdates", False)
     should_continue_check = row.get("shouldContinueCheck", True)
@@ -210,7 +209,7 @@ def process_row(row):
             })
 
             # Send update notification if enabled
-            if should_send_updates and telegram_id:
+            if telegram_id:
                 if should_send_detailed:
                     message = format_updates_message(url, updates_log, new_detected_changes)
                 else:
@@ -232,7 +231,7 @@ def main():
     try:
         response = supabase.table("ezynotify").select(
             "id, url, keywords, email, telegramID, reference, isUpdated, foundKeyword, "
-            "shouldContinueCheck, Updates, shouldSendUpdates, shouldSendDetailedUpdates, "
+            "shouldContinueCheck, Updates, shouldSendDetailedUpdates, "
             "checkUpdates, completed"
         ).execute()
         
