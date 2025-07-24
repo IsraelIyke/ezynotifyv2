@@ -137,12 +137,6 @@ def process_row(row):
     # Fetch and normalize new text
     new_text = get_text_from_url(url)
     update_data = {}
-
-    # ===== KEY CHANGE =====
-    # Always update reference if content changed (regardless of checkUpdates)
-    if new_text != old_reference:
-        update_data["reference"] = new_text
-    # =====================
     
     # Process keywords if they exist
     if keyword_list:
@@ -189,8 +183,14 @@ def process_row(row):
 
     # Process updates if enabled
     if check_updates:
-        # Only proceed if we have an old reference to compare against
-        if old_reference.strip() and new_text != old_reference:
+        # If no old reference, save the text
+        if not old_reference.strip():
+            print("📌 No reference found. Saving new text.")
+            update_data.update({
+                "reference": new_text,
+                "isUpdated": False
+            })
+        elif new_text != old_reference:
             print("🟡 Change detected... comparing for diff")
 
             # Detect changes and update 'Updates'
@@ -203,6 +203,7 @@ def process_row(row):
                     print(f" - [{change['action']}] {change['change']} at {change['time']}")
 
             update_data.update({
+                "reference": new_text,
                 "isUpdated": True,
                 "Updates": updates_log
             })
@@ -218,7 +219,7 @@ def process_row(row):
                               f"ℹ️ Detailed updates are available but not shown. Enable detailed updates to see them.")
                 send_telegram_notification(telegram_id, message, is_update=True)
         else:
-            print("✅ No change detected or no reference to compare against.")
+            print("✅ No change detected.")
 
     # Push to Supabase if we have updates
     if update_data:
