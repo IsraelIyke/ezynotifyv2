@@ -102,9 +102,9 @@ def format_updates_message(url, updates, new_detected_changes):
         message += "<b>New Changes:</b>\n"
         for change in new_detected_changes:
             emoji = "🟢" if change['action'] == 'added' else "🔴"
-            message += f"{emoji} <b>{change['action'].title()}:</b> {change['change']}\n"
-            if 'context' in change and change['context']:
-                message += f"   <i>Context:</i> {change['context']}\n"
+            message += f"{emoji} <b>{change['action'].title()}:</b> {change['context']}\n"
+            # if 'context' in change and change['context']:
+            #     message += f"   <i>Context:</i> {change['context']}\n"
         message += "\n"
     
     if updates:
