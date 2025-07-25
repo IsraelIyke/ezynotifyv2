@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
 from supabase import create_client
@@ -16,6 +17,10 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_UPDATES_BOT_TOKEN = os.getenv("TELEGRAM_UPDATES_BOT_TOKEN")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def count_visible_chars(text):
+    """Count visible characters (excluding HTML tags)"""
+    return len(re.sub('<[^<]+?>', '', text))
 
 def send_telegram_notification(chat_id, message, is_update=False):
     """Send a message to a Telegram chat using the appropriate bot token"""
@@ -57,6 +62,10 @@ def get_diff(old_text, new_text):
     d = difflib.Differ()
     diff_lines = list(d.compare(old_lines, new_lines))
 
+    current_change = None
+    current_action = None
+    current_context = None
+
     for line in diff_lines:
         if line.startswith('+ ') or line.startswith('- '):
             action = 'added' if line.startswith('+ ') else 'removed'
@@ -64,49 +73,97 @@ def get_diff(old_text, new_text):
 
             # Use word-level diff on this changed line
             old_words = sentence.split()
-            ref_line = ''
             if action == 'added':
-                ref_line = ''
                 word_diff = difflib.ndiff([], old_words)
             else:
-                ref_line = sentence
                 word_diff = difflib.ndiff(old_words, [])
 
             for word_line in word_diff:
                 if word_line.startswith('+ ') or word_line.startswith('- '):
                     word_action = 'added' if word_line.startswith('+ ') else 'removed'
                     word = word_line[2:]
-                    changes.append({
-                        "change": word,
-                        "action": word_action,
-                        "context": sentence,
-                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    })
+
+                    # If continuing same action in same context
+                    if (current_action == word_action and 
+                        current_context == sentence and
+                        current_change is not None):
+                        current_change += f" {word}"
+                    else:
+                        # Finish previous change if exists
+                        if current_change is not None:
+                            changes.append({
+                                "change": current_change,
+                                "action": current_action,
+                                "context": current_context,
+                                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                        
+                        # Start new change
+                        current_change = word
+                        current_action = word_action
+                        current_context = sentence
+
+    # Add the last change if it exists
+    if current_change is not None:
+        changes.append({
+            "change": current_change,
+            "action": current_action,
+            "context": current_context,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
 
     return changes
 
 def format_updates_message(url, updates, new_detected_changes):
-    """Format the updates message with detected changes"""
-    message = f"🔄 <b>Website Changes Detected</b>\n\n<b>URL:</b> {url}\n\n"
+    """Format the updates message with detected changes, ensuring it stays within Telegram's limits"""
+    MAX_LENGTH = 4096  # Telegram's message character limit
     
+    # Build the message parts
+    header = f"🔄 <b>Website Changes Detected</b>\n\n<b>URL:</b> {url}\n\n"
+    
+    new_changes_section = ""
     if new_detected_changes:
-        message += "<b>New Changes:</b>\n"
+        new_changes_section = "<b>New Changes:</b>\n"
         for change in new_detected_changes:
             emoji = "🟢" if change['action'] == 'added' else "🔴"
-            message += f"{emoji} <b>{change['action'].title()}:</b> {change['change']}\n"
+            new_changes_section += f"{emoji} <b>{change['action'].title()}:</b> {change['change']}\n"
             if 'context' in change and change['context']:
-                message += f"   <i>Context:</i> {change['context']}\n"
-        message += "\n"
+                new_changes_section += f"   <i>Context:</i> {change['context']}\n"
+        new_changes_section += "\n"
     
+    previous_changes_section = ""
     if updates:
-        message += "<b>Previous Changes:</b>\n"
-        for update in updates[-5:]:  # Show only last 5 updates to avoid message being too long
+        previous_changes_section = "<b>Previous Changes:</b>\n"
+        for update in updates[-5:]:  # Show only last 5 updates
             emoji = "🟢" if update['action'] == 'added' else "🔴"
-            message += f"{emoji} <b>{update['action'].title()}:</b> {update['change']}\n"
+            previous_changes_section += f"{emoji} <b>{update['action'].title()}:</b> {update['change']}\n"
             if 'context' in update and update['context']:
-                message += f"   <i>Context:</i> {update['context']}\n"
+                previous_changes_section += f"   <i>Context:</i> {update['context']}\n"
     
-    return message
+    # Combine all parts
+    full_message = header + new_changes_section + previous_changes_section
+    
+    # Check if we're over the limit
+    if count_visible_chars(full_message) > MAX_LENGTH:
+        # First try without previous changes
+        test_message = header + new_changes_section
+        if count_visible_chars(test_message) <= MAX_LENGTH:
+            # If new changes fit alone, include them and truncate previous changes
+            remaining_chars = MAX_LENGTH - count_visible_chars(test_message)
+            if remaining_chars > 100:  # Only include previous if we have significant space
+                truncated_previous = previous_changes_section[:remaining_chars-4] + "..."
+                return test_message + truncated_previous
+            return test_message
+        else:
+            # If new changes alone are too long, create a summary
+            summary_message = header + "<b>New Changes:</b> (Too many to display)\n"
+            added_count = sum(1 for c in new_detected_changes if c['action'] == 'added')
+            removed_count = sum(1 for c in new_detected_changes if c['action'] == 'removed')
+            summary_message += f"🟢 {added_count} additions | 🔴 {removed_count} removals\n\n"
+            summary_message += "<i>Enable detailed updates to see all changes</i>"
+            return summary_message
+    
+    return full_message
 
 def process_row(row):
     """Process a single row from the Supabase table"""
@@ -138,11 +195,9 @@ def process_row(row):
     new_text = get_text_from_url(url)
     update_data = {}
 
-    # ===== KEY CHANGE =====
-    # Always update reference if content changed (regardless of checkUpdates)
+    # Always update reference if content changed
     if new_text != old_reference:
         update_data["reference"] = new_text
-    # =====================
     
     # Process keywords if they exist
     if keyword_list:
