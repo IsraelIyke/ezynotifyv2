@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
 from supabase import create_client
@@ -48,50 +49,59 @@ def get_text_from_url(url):
         print(f"Error fetching {url}: {e}")
         return ""
 
+def split_sentences(text):
+    """Split text into sentences while preserving punctuation"""
+    return [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+
 def get_diff(old_text, new_text):
-    old_lines = old_text.splitlines()
-    new_lines = new_text.splitlines()
+    """Improved diff that respects sentence boundaries and shows changes in context"""
+    old_sentences = split_sentences(old_text)
+    new_sentences = split_sentences(new_text)
     changes = []
 
-    # Compare line by line
-    d = difflib.Differ()
-    diff_lines = list(d.compare(old_lines, new_lines))
-
-    for line in diff_lines:
-        if line.startswith('+ ') or line.startswith('- '):
-            action = 'added' if line.startswith('+ ') else 'removed'
-            sentence = line[2:].strip()
+    # Compare sentence by sentence
+    for old_sent, new_sent in zip(old_sentences, new_sentences):
+        if old_sent != new_sent:
+            old_words = old_sent.split()
+            new_words = new_sent.split()
+            
+            word_diff = difflib.ndiff(old_words, new_words)
+            
             changed_words = []
-
-            # Use word-level diff on this changed line
-            old_words = sentence.split()
-            if action == 'added':
-                word_diff = difflib.ndiff([], old_words)
-            else:
-                word_diff = difflib.ndiff(old_words, [])
-
-            for word_line in word_diff:
-                if word_line.startswith('+ ') or word_line.startswith('- '):
-                    word = word_line[2:]
-                    changed_words.append(word)
-
+            change_indices = []
+            for i, word_line in enumerate(word_diff):
+                if word_line.startswith('+ '):
+                    changed_words.append(word_line[2:])
+                    change_indices.append(i)
+            
             if changed_words:
-                # Create bolded context
-                context_words = []
-                for word in sentence.split():
-                    if word in changed_words:
-                        context_words.append(f"<b>{word}</b>")
+                # Find the continuous block of changes
+                first_change = min(change_indices)
+                last_change = max(change_indices)
+                
+                # Get context within sentence (2 words before and after by default)
+                context_start = max(0, first_change - 2)
+                context_end = min(len(new_words), last_change + 3)
+                
+                context = new_words[context_start:context_end]
+                
+                # Bold the changed words in the context
+                bolded_context = []
+                for i, word in enumerate(context, start=context_start):
+                    if i in change_indices:
+                        bolded_context.append(f"<b>{word}</b>")
                     else:
-                        context_words.append(word)
-                bolded_context = ' '.join(context_words)
-
+                        bolded_context.append(word)
+                
+                full_context = ' '.join(bolded_context)
+                
                 changes.append({
                     "change": ' '.join(changed_words),
-                    "action": action,
-                    "context": bolded_context,
+                    "action": "added",
+                    "context": full_context,
                     "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 })
-
+    
     return changes
 
 def format_updates_message(url, updates, new_detected_changes):
@@ -102,18 +112,18 @@ def format_updates_message(url, updates, new_detected_changes):
         message += "<b>New Changes:</b>\n"
         for change in new_detected_changes:
             emoji = "🟢" if change['action'] == 'added' else "🔴"
-            message += f"{emoji} <b>{change['action'].title()}:</b> {change['context']}\n"
-            # if 'context' in change and change['context']:
-            #     message += f"   <i>Context:</i> {change['context']}\n"
+            message += f"{emoji} <b>{change['action'].title()}:</b> {change['change']}\n"
+            if 'context' in change and change['context']:
+                message += f"   <i>Context:</i> {change['context']}\n"
         message += "\n"
     
     if updates:
         message += "<b>Previous Changes:</b>\n"
         for update in updates[-5:]:  # Show only last 5 updates to avoid message being too long
             emoji = "🟢" if update['action'] == 'added' else "🔴"
-            message += f"{emoji} <b>{update['action'].title()}:</b> {update['context']}\n"
-            # if 'context' in update and update['context']:
-            #     message += f"   <i>Context:</i> {update['context']}\n"
+            message += f"{emoji} <b>{update['action'].title()}:</b> {update['change']}\n"
+            if 'context' in update and update['context']:
+                message += f"   <i>Context:</i> {update['context']}\n"
     
     # Ensure message doesn't exceed Telegram's limit (4096 chars)
     if len(message) > 4096:
@@ -151,7 +161,7 @@ def process_row(row):
     new_text = get_text_from_url(url)
     update_data = {}
 
-    # Always update reference if content changed (regardless of checkUpdates)
+    # Always update reference if content changed
     if new_text != old_reference:
         update_data["reference"] = new_text
     
@@ -200,7 +210,6 @@ def process_row(row):
 
     # Process updates if enabled
     if check_updates:
-        # Only proceed if we have an old reference to compare against
         if old_reference.strip() and new_text != old_reference:
             print("🟡 Change detected... comparing for diff")
 
@@ -250,7 +259,6 @@ def main():
             for i, row in enumerate(response.data, 1):
                 print(f"\n🔹 Processing row {i}/{len(response.data)} - URL: {row.get('url')}")
                 process_row(row)
-                # Add a small delay between processing rows to avoid rate limiting
                 time.sleep(1)
         else:
             print("No data found in the table.")
