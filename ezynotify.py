@@ -111,9 +111,9 @@ def format_updates_message(url, updates, new_detected_changes):
         message += "<b>Previous Changes:</b>\n"
         for update in updates[-5:]:  # Show only last 5 updates to avoid message being too long
             emoji = "🟢" if update['action'] == 'added' else "🔴"
-            message += f"{emoji} <b>{update['action'].title()}:</b> {update['change']}\n"
-            if 'context' in update and update['context']:
-                message += f"   <i>Context:</i> {update['context']}\n"
+            message += f"{emoji} <b>{update['action'].title()}:</b> {update['context']}\n"
+            # if 'context' in update and update['context']:
+            #     message += f"   <i>Context:</i> {update['context']}\n"
     
     # Ensure message doesn't exceed Telegram's limit (4096 chars)
     if len(message) > 4096:
