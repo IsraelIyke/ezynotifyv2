@@ -19,8 +19,17 @@
 
 ```bash
 # Clone the repo. Refer to https://github.com/IsraelIyke/ezynotify-bot for the 2nd part of the bot. This part only hosts the github action yml
-git clone https://github.com/your-username/ezynotifyv2.git
+git clone https://github.com/IsraelIyke/ezynotifyv2.git
 cd ezynotifyv2
 
 # Install dependencies
 pip install -r requirements.txt
+```
+
+---
+
+## 🧩 Tech Stack
+- Python
+- Selenium (scraping)
+- Supabase (storage)
+- GitHub Actions (automation)
