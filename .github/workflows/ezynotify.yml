@@ -1,4 +1,4 @@
-name: Run Website Monitor
+name: Run Web Monitor
 on:
   schedule:
     # Run every 2 minutes
