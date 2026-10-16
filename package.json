@@ -1,0 +1,19 @@
+{
+  "name": "ezynotifyv2",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check supabase/functions/_shared/bot.mjs && node --check supabase/functions/_shared/services.mjs && node --check supabase/functions/_shared/ai.mjs",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "description": "Supabase Telegram bot with Groq summaries and a Playwright monitoring worker",
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.10"
+  }
+}

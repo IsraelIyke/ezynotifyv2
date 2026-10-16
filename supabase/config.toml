@@ -1,0 +1,10 @@
+project_id = "ezynotifyv2"
+
+[functions.ezynotify-telegram]
+verify_jwt = false
+
+[functions.ezynotify-dispatch]
+verify_jwt = false
+
+[functions.ezynotify-ai]
+verify_jwt = false

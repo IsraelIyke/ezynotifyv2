@@ -1,0 +1,31 @@
+import asyncio
+import os
+from urllib.parse import urlencode
+import aiohttp
+
+
+class Store:
+    def __init__(self,session,url=None,key=None):
+        self.session=session
+        self.url=(url or os.environ['SUPABASE_URL']).rstrip('/')
+        self.key=key or os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.environ['SUPABASE_KEY']
+
+    async def request(self,path,method='GET',body=None,prefer=None):
+        headers={'apikey':self.key,'Authorization':'Bearer '+self.key,'Content-Type':'application/json'}
+        if prefer:headers['Prefer']=prefer
+        async with self.session.request(method,self.url+'/rest/v1/'+path,headers=headers,json=body,timeout=aiohttp.ClientTimeout(total=25)) as response:
+            if not response.ok:raise RuntimeError(f'Database request failed ({response.status})')
+            data=await response.text()
+            import json
+            return json.loads(data) if data else None
+
+    async def rpc(self,name,body):
+        return await self.request('rpc/'+name,'POST',body)
+
+    async def cache(self,key):
+        rows=await self.request('fetch_cache?'+urlencode({'cache_key':'eq.'+key,'select':'result,fetched_at'}))
+        return rows[0] if rows else None
+
+    async def set_cache(self,key,result):
+        from .models import utcnow
+        await self.request('fetch_cache?on_conflict=cache_key','POST',{'cache_key':key,'result':result.cached(),'fetched_at':utcnow().isoformat()},'resolution=merge-duplicates')

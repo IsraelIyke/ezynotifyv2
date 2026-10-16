@@ -1,5 +1,5 @@
-requests
-beautifulsoup4
-python-dotenv
-supabase
-selenium
+aiohttp>=3.13.5,<4
+beautifulsoup4>=4.13,<5
+defusedxml>=0.7.1,<1
+playwright==1.58.0
+python-dotenv>=1.0,<2
