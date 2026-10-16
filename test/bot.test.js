@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { createBot, normalizeUrl } from '../supabase/functions/_shared/bot.mjs';
 import { dispatchChecks, secureEquals } from '../supabase/functions/_shared/services.mjs';
 
+test('privacy command and request buttons are reachable',async()=>{
+  const f=fixture();await f.send('/privacy');
+  assert.ok(f.messages.at(-1).body.text.includes('robots.txt'));
+  await f.click('privacy:1');assert.ok(f.messages.at(-1).body.text.includes('Every failed check'));
+  await f.click('privacy:deletion');assert.ok(f.calls.some(([name,args])=>name==='request_bot_privacy'&&args.p_chat==='123'&&args.p_kind==='deletion'));
+});
+
 function fixture() {
   const sessions=new Map(), monitors=new Map(), preferences=new Map(), calls=[], messages=[];
   let clock=new Date('2026-10-16T12:00:00Z');

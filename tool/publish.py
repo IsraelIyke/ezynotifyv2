@@ -28,7 +28,7 @@ def main():
         print('Published commit:',git('rev-parse','--short','HEAD').decode().strip())
         return
     if git('rev-parse','HEAD').strip()!=git('rev-parse','origin/main').strip():raise RuntimeError('Remote changed; review before publishing')
-    git('add','--','.github','README.md','ezynotify.py','requirements.txt','.env.example','.gitignore','assets','monitor','package.json','package-lock.json','supabase','test','tool')
+    git('add','--','.github','PRIVACY.md','README.md','ezynotify.py','requirements.txt','.env.example','.gitignore','assets','monitor','package.json','package-lock.json','supabase','test','tool')
     files=git('diff','--cached','--name-only','--diff-filter=ACM').decode().splitlines()
     private_values=[v for k,v in values.items() if any(word in k for word in ['TOKEN','SECRET','KEY']) and len(v)>12]
     for path in files:

@@ -173,3 +173,8 @@ Delivery is at least once: a Telegram send that succeeds just before a worker cr
 ## License
 
 MIT. Both original components are by Israel Ikechukwu. See [LICENSE](LICENSE).
+## Admin alerts and privacy
+
+Every completed failed website check queues an admin alert in Supabase, including consecutive failures. Configure the recipient in the service-only `monitor_admin_settings` table. The `ezynotify-notifications` Edge Function sends these alerts through the main bot; an authenticated Supabase Cron job runs every minute. Delivery retries are independent of user-facing failure suppression. Alerts include the hostname, monitor ID/type, reason and timestamp, excluding URL paths, queries and page content.
+
+The `/privacy` command and dashboard button explain responsible monitoring, robots.txt, permissions, data processing and limitations of liability. See [PRIVACY.md](PRIVACY.md). Access, correction and deletion requests are recorded in the service-only `privacy_requests` table for manual operator review. Review this table regularly; submitting a request does not automatically delete records.

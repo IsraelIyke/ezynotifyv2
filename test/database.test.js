@@ -14,6 +14,7 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
       insert into ezynotify(url,reference,"telegramID",keywords) values('https://example.com','Preserve me',123,'{"keywords":["news"]}');`);
     await db.exec(await readFile(new URL('../supabase/migrations/202610160001_monitoring_v3.sql',import.meta.url),'utf8'));
     await db.exec(await readFile(new URL('../supabase/migrations/202610160002_users_and_timezones.sql',import.meta.url),'utf8'));
+    await db.exec(await readFile(new URL('../supabase/migrations/202610160003_admin_failure_alerts.sql',import.meta.url),'utf8'));
     await t.test('historical owners are backfilled without inflating active usage, and profile updates are idempotent',async()=>{
       let r=await db.query('select * from bot_usage_stats');assert.equal(r.rows[0].total_users,1);assert.equal(r.rows[0].active_last_24h,0);
       await db.query("select record_bot_user('123','{\"first_name\":\"Test\",\"username\":\"testuser\"}',12)");
@@ -61,6 +62,21 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
       assert.equal((await db.query("select acquire_runtime_lock('dispatch','b',60) as ok")).rows[0].ok,false);
       assert.equal((await db.query('select claim_bot_update(42) as ok')).rows[0].ok,true);
       assert.equal((await db.query('select claim_bot_update(42) as ok')).rows[0].ok,false);
+    });
+    await t.test('repeated failures queue separate admin alerts and privacy requests are idempotent',async()=>{
+      await db.exec("insert into monitor_admin_settings(chat_id) values('999'); update ezynotify set url='https://example.com/private?token=secret' where id=1");
+      for(let i=0;i<2;i++)await db.query("insert into monitor_events(monitor_id,status,summary) values('1','error','Blocked <test>')");
+      await db.query("insert into monitor_events(monitor_id,status,summary) values('1','unchanged','Fine')");
+      const alerts=(await db.query("select * from notification_outbox where channel='admin_failure'")).rows;
+      assert.equal(alerts.length,2);assert.equal(alerts[0].chat_id,'999');
+      assert.ok(alerts[0].payload.text.includes('&lt;test&gt;'));assert.ok(!alerts[0].payload.text.includes('secret'));
+      assert.ok((await db.query("select * from claim_notifications('users',100)")).rows.every(x=>x.channel!=='admin_failure'));
+      assert.equal((await db.query("select * from claim_admin_notifications('admin',20)")).rows.length,2);
+      const a=(await db.query("select request_bot_privacy('123','deletion') id")).rows[0].id;
+      assert.equal((await db.query("select request_bot_privacy('123','deletion') id")).rows[0].id,a);
+      await db.exec('set role anon');
+      await assert.rejects(db.query("select request_bot_privacy('123','access')"));
+      await db.exec('reset role');
     });
     await t.test('public API roles cannot execute privileged worker functions',async()=>{
       await db.exec('set role anon');

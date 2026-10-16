@@ -1,8 +1,9 @@
 import { formatTimestamp, formatInterval, validTimezone } from './time.mjs';
+import { PRIVACY_PAGES } from './privacy.mjs';
 export const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const q = encodeURIComponent;
 const button = (text, callback_data, style) => ({ text, callback_data, ...(style ? { style } : {}) });
-const homeButtons = () => [[button('✨ New monitor', 'new', 'primary')], [button('📋 My monitors', 'list:0'), button('💡 Help', 'help')], [button('🌍 Timezone','timezone')]];
+const homeButtons = () => [[button('✨ New monitor', 'new', 'primary')], [button('📋 My monitors', 'list:0'), button('💡 Help', 'help')], [button('🌍 Timezone','timezone'),button('🔐 Privacy','privacy:0')]];
 const backHome = () => [[button('🏠 Dashboard', 'home')]];
 const statusIcon = (m) => m.paused ? '⏸' : m.completed ? '🏁' : ['challenge','blocked','robots_denied'].includes(m.last_status) ? '🛡' : m.failure_count ? '⚠️' : '🟢';
 const siteName = (url) => { try { return new URL(url).hostname; } catch { return 'Website monitor'; } };
@@ -90,7 +91,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
   async function review(chat,d,mid) {
     d.step='review'; await save(chat,d);
     const c=d.fetch_config;
-    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n\n<i>Only public pages are supported. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
+    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n\n<i>Only public pages are supported. Check robots.txt, site terms and required permissions. Read /privacy before saving. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
       draftButtons(d,[[['💚 Save monitor','confirm','success']],[['⚙️ Advanced settings','advanced']],[['✖️ Discard draft','cancel']]]),mid);
   }
   async function prompt(chat,d,mid) {
@@ -197,6 +198,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
         if(value)return saveTimezone(chatId,value);
         action='timezone';
       }
+      else if(command==='/privacy')action='privacy:0';
       else if(command==='/help')action='help';
       else if(command==='/cancel') {await clear(chatId);return screen(chatId,'Draft discarded. Your saved monitors are unchanged.',homeButtons());}
       else if(['/list_update_requests','/list_keyword_check_requests','/monitors'].includes(command))action='list:0';
@@ -209,6 +211,16 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     if(action==='home')return dashboard(chatId,mid);
     if(action==='timezone')return timezoneMenu(chatId,mid);
     if(action.startsWith('tz:'))return saveTimezone(chatId,action.slice(3),mid);
+    if(action.startsWith('privacy:')) {
+      const part=action.split(':')[1];
+      if(['0','1'].includes(part))return screen(chatId,PRIVACY_PAGES[Number(part)],[[button(part==='0'?'Next →':'← Previous',part==='0'?'privacy:1':'privacy:0')],[button('📨 Privacy request','privacy:request')],...backHome()],mid);
+      if(part==='request')return screen(chatId,'📨 <b>Privacy request</b>\n\nChoose a request type for manual operator review. This does not automatically delete data.',[[button('Access my data','privacy:access'),button('Correct my data','privacy:correction')],[button('Request deletion','privacy:deletion'),button('Other concern','privacy:other')],...backHome()],mid);
+      if(['access','correction','deletion','other'].includes(part)) {
+        const id=await db.rpc('request_bot_privacy',{p_chat:chatId,p_kind:part});
+        return screen(chatId,`✅ <b>Request recorded</b>\n\nReference: #${escapeHtml(id)}\nType: ${escapeHtml(part)}\n\nThe operator will review it manually. Repeating a pending request returns the same reference. No data has been automatically deleted.`,backHome(),mid);
+      }
+      return;
+    }
     if(action==='help')return screen(chatId,'💡 <b>Your monitoring guide</b>\n\n<b>1.</b> Add a public page.\n<b>2.</b> Choose content changes or keywords.\n<b>3.</b> Pick a schedule and save.\n\n🧠 AI summarizes detected changes. If AI is unavailable, you still get a factual change excerpt.\n🛡 A CAPTCHA or access block gets a notice, not a false content alert. The last good snapshot stays safe.\n🔎 Keywords alert on first appearance, then re-arm after disappearing.\n⏱ Check now requests a job, subject to a two-minute cooldown.\n\nUse /cancel to discard an unfinished draft. Advanced settings support CSS targets, iframe targets, scrolling, HTML, feeds and JSON.\n\n<i>Only public pages are supported. Site restrictions and runner delays can prevent a check.</i>',homeButtons(),mid);
     if(action==='new')return screen(chatId,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> - announcements, prices, application pages.\n🔎 <b>Keywords</b> - get notified when a word or phrase appears.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],...backHome()],mid);
     if(action.startsWith('new:'))return begin(chatId,action.slice(4),mid);

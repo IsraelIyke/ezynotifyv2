@@ -37,7 +37,7 @@ def set_github_secrets(values):
 def deploy_functions(values):
     env=os.environ.copy()
     env['SUPABASE_ACCESS_TOKEN']=env.get('SUPABASE_ACCESS_TOKEN') or read_env(ROOT.parent/'guru-bot'/'.env')['SUPABASE_ACCESS_TOKEN']
-    for slug in ['ezynotify-telegram','ezynotify-dispatch','ezynotify-ai']:
+    for slug in ['ezynotify-telegram','ezynotify-dispatch','ezynotify-ai','ezynotify-notifications']:
         # CLI reads only the access token from the subprocess environment.
         result=subprocess.run(['supabase.cmd','functions','deploy',slug,'--project-ref',values['PROJECT_REF'],'--use-api','--no-verify-jwt'],cwd=ROOT,env=env,capture_output=True,text=True)
         if result.returncode:raise RuntimeError(f'Function deployment failed for {slug}; no raw CLI output printed')
@@ -59,6 +59,10 @@ def configure_bot(values):
     telegram_call(values,'setMyDescription',{'description':'🔔 Your websites. Your updates. Less checking.\n\nTrack public pages for changes or keywords, get concise AI summaries, and manage everything with simple buttons.\n\n🧠 Clear change summaries\n🔎 Keyword alerts\n🛡 Honest access-block notices\n⏱ Flexible check schedules\n\nTap Start to create your first monitor.'})
     telegram_call(values,'setMyShortDescription',{'short_description':'🔔 Website changes & keyword alerts, with clear AI summaries. Add a page and let EzyNotify keep watch.'})
     telegram_call(values,'setMyCommands',{'commands':[{'command':'start','description':'🔔 Open your dashboard'},{'command':'new','description':'✨ Create a website monitor'},{'command':'monitors','description':'📋 View and manage your monitors'},{'command':'timezone','description':'🌍 Set your local timezone'},{'command':'help','description':'💡 How monitoring works'},{'command':'cancel','description':'✖️ Discard the current draft'}]})
+    commands=telegram_call(values,'getMyCommands',{})
+    commands=[c for c in commands if c['command']!='privacy']
+    commands.append({'command':'privacy','description':'Privacy and responsible use'})
+    telegram_call(values,'setMyCommands',{'commands':commands})
     telegram_call(values,'setChatMenuButton',{'menu_button':{'type':'commands'}})
     telegram_call(values,'setWebhook',{'url':f'https://{values["PROJECT_REF"]}.supabase.co/functions/v1/ezynotify-telegram','secret_token':values['TELEGRAM_WEBHOOK_SECRET'],'allowed_updates':['message','callback_query'],'max_connections':1,'drop_pending_updates':False})
     info=telegram_call(values,'getWebhookInfo',{})
