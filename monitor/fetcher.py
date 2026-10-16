@@ -232,7 +232,8 @@ class Fetcher:
             if request_count>120:return FetchResult('resource_limit',reason='This page exceeded the browser request limit; use a feed/API or a simpler page.')
             if challenge_signal(body,await page.content(),response_headers):return FetchResult('challenge',reason='The website requires human verification.')
             if await page.locator('input[type="password"]').count() and len(content)<2000:return FetchResult('login',reason='The page requires a login.')
-            suspicious=len(content)<300 or any(x in (await page.title()).lower() for x in ('access denied','just a moment','security check','error'))
+            page_title=(await page.title()).lower()
+            suspicious=len(content)<300 or any(x in page_title for x in ('access denied','just a moment','security check','error'))
             if suspicious and self.ai:
                 screenshot=base64.b64encode(await page.screenshot(full_page=False)).decode() if self.ai.vision_model else ''
                 classification=await self.ai.classify(body,screenshot)
@@ -268,6 +269,11 @@ class Fetcher:
             except ValueError as error:
                 if 'robots.txt' in str(error):return FetchResult('robots_unavailable',reason='robots.txt could not be verified; retrying later.')
                 return FetchResult('error',reason='The page could not be read. Check the URL and advanced selectors.')
-            except Exception:
-                return FetchResult('error',reason='The page could not be read. Check the URL and advanced selectors.')
+            except BrowserError as error:
+                if 'selector' in str(error).lower():return FetchResult('invalid_selector',reason='The configured CSS selector is invalid. Edit the target or ignored regions in Advanced settings.')
+                return FetchResult('browser_error',reason='The browser could not finish reading this page. Please retry later.')
+            except Exception as error:
+                import logging
+                logging.getLogger(__name__).error('Internal extraction failure (%s)',type(error).__name__)
+                return FetchResult('internal_error',reason='The checker encountered an internal error. Your saved snapshot is safe. Please retry later.')
             finally:self.last_request[domain]=time.monotonic()

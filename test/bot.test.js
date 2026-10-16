@@ -4,12 +4,16 @@ import { createBot, normalizeUrl } from '../supabase/functions/_shared/bot.mjs';
 import { dispatchChecks, secureEquals } from '../supabase/functions/_shared/services.mjs';
 
 function fixture() {
-  const sessions=new Map(), monitors=new Map(), calls=[], messages=[];
+  const sessions=new Map(), monitors=new Map(), preferences=new Map(), calls=[], messages=[];
   let clock=new Date('2026-10-16T12:00:00Z');
   const db={
     async request(path,options={}) {
       calls.push([path,options]);
       const [table,query='']=path.split('?'),params=new URLSearchParams(query);
+      if(table==='bot_preferences') {
+        if(options.method==='POST'){preferences.set(options.body.chat_id,options.body);return null;}
+        const pref=preferences.get(params.get('chat_id')?.slice(3));return pref?[pref]:[];
+      }
       if(table==='bot_sessions') {
         const chat=params.get('chat_id')?.slice(3);
         if(options.method==='POST'){sessions.set(options.body.chat_id,structuredClone(options.body));return null;}
@@ -92,6 +96,16 @@ test('user text is HTML escaped and destructive actions require confirmation',as
 test('public URL validation rejects credentials, private names, literal IPs and unsafe schemes',()=>{
   for(const value of ['http://127.0.0.1','http://2130706433','http://localhost','http://service.internal','http://user:pass@example.com','https://example.com:8080','file:///etc/passwd','http://[::1]'])assert.throws(()=>normalizeUrl(value),undefined,value);
   assert.equal(normalizeUrl('example.com/news#section'),'https://example.com/news');
+});
+
+test('timezone survives handler restarts and applies to monitor times with readable intervals',async()=>{
+  const f=fixture();
+  await f.send('/timezone Africa/Lagos');f.restart();
+  f.monitors.set('1',{id:1,telegramID:'123',url:'https://example.com',title:'News',checkUpdates:true,interval_minutes:1440,last_checked_at:'2026-10-16T12:00:00Z',fetch_config:{}});
+  await f.click('view:1');
+  const text=f.messages.at(-1).body.text;
+  assert.match(text,/Every 1 day/);assert.match(text,/13:00/);assert.match(text,/Africa\/Lagos/);assert.ok(!text.includes('1440 minutes'));
+  await f.send('/timezone Invalid/Timezone');assert.match(f.messages.at(-1).body.text,/not recognized/);
 });
 
 test('dispatch is authenticated, coalesced, and does not start an idle batch',async()=>{

@@ -1,10 +1,10 @@
+import { formatTimestamp, formatInterval, validTimezone } from './time.mjs';
 export const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const q = encodeURIComponent;
 const button = (text, callback_data, style) => ({ text, callback_data, ...(style ? { style } : {}) });
-const homeButtons = () => [[button('✨ New monitor', 'new', 'primary')], [button('📋 My monitors', 'list:0'), button('💡 Help', 'help')]];
+const homeButtons = () => [[button('✨ New monitor', 'new', 'primary')], [button('📋 My monitors', 'list:0'), button('💡 Help', 'help')], [button('🌍 Timezone','timezone')]];
 const backHome = () => [[button('🏠 Dashboard', 'home')]];
 const statusIcon = (m) => m.paused ? '⏸' : m.completed ? '🏁' : ['challenge','blocked','robots_denied'].includes(m.last_status) ? '🛡' : m.failure_count ? '⚠️' : '🟢';
-const stamp = (s) => s ? new Date(s).toISOString().replace('T',' ').slice(0,16)+' UTC' : 'Not yet';
 const siteName = (url) => { try { return new URL(url).hostname; } catch { return 'Website monitor'; } };
 
 export function normalizeUrl(input) {
@@ -18,6 +18,21 @@ export function normalizeUrl(input) {
 }
 
 export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
+  async function timezone(chat) {
+    const rows=await db.request(`bot_preferences?chat_id=eq.${q(chat)}&select=timezone&limit=1`);
+    return validTimezone(rows?.[0]?.timezone)||'UTC';
+  }
+  async function saveTimezone(chat,value,mid) {
+    const zone=validTimezone(value);
+    if(!zone)return screen(chat,'That timezone was not recognized. Use a city timezone such as <code>Africa/Lagos</code>, <code>Europe/Paris</code>, or <code>America/New_York</code>.\n\nSend <code>/timezone Europe/Paris</code> to set it.',[[button('🌍 Choose timezone','timezone')]],mid);
+    await db.request('bot_preferences?on_conflict=chat_id',{method:'POST',prefer:'resolution=merge-duplicates',body:{chat_id:chat,timezone:zone,updated_at:now().toISOString()}});
+    return screen(chat,`🌍 <b>Timezone saved</b>\n\n<b>${escapeHtml(zone)}</b>\nYour local time: ${escapeHtml(formatTimestamp(now(),zone))}\n\nMonitor times, activity and future alert timestamps will use this timezone. Daylight saving is handled automatically.`,homeButtons(),mid);
+  }
+  async function timezoneMenu(chat,mid) {
+    const zone=await timezone(chat);
+    const pairs=[['Lagos','Africa/Lagos','Accra','Africa/Accra'],['London','Europe/London','Paris','Europe/Paris'],['New York','America/New_York','Los Angeles','America/Los_Angeles'],['Dubai','Asia/Dubai','Kolkata','Asia/Kolkata'],['Singapore','Asia/Singapore','Tokyo','Asia/Tokyo'],['Sydney','Australia/Sydney','São Paulo','America/Sao_Paulo']];
+    return screen(chat,`🌍 <b>Your local time</b>\n\nCurrent timezone: <b>${escapeHtml(zone)}</b>\n${escapeHtml(formatTimestamp(now(),zone))}\n\nChoose a city below, or send <code>/timezone Region/City</code> for any other timezone.\n\nTelegram does not share your device timezone. This preference applies to all your monitors.`,[...pairs.map(([a,x,b,y])=>[button(a,`tz:${x}`),button(b,`tz:${y}`)]),[button('UTC','tz:UTC')],...backHome()],mid);
+  }
   async function session(chat) {
     const rows = await db.request(`bot_sessions?chat_id=eq.${q(chat)}&expires_at=gt.${q(now().toISOString())}&select=draft`);
     return rows?.[0]?.draft || null;
@@ -43,7 +58,8 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
   }
   async function dashboard(chat, mid) {
     await clear(chat);
-    return screen(chat, '🔔 <b>EzyNotify</b>\n<i>Your websites. Your updates. Less checking.</i>\n\nWatch a page for changes or keywords. Get clear AI summaries when something changes.\n\nChoose where to start 👇', homeButtons(), mid);
+    const zone=await timezone(chat);
+    return screen(chat, `🔔 <b>EzyNotify</b>\n<i>Your websites. Your updates. Less checking.</i>\n\nWatch a page for changes or keywords. Get clear AI summaries when something changes.\n\n🌍 Timezone: <b>${escapeHtml(zone)}</b>${zone==='UTC'?' · Select your timezone below':''}\n\nChoose where to start 👇`, homeButtons(), mid);
   }
   async function list(chat,page=0,mid) {
     page = Math.max(0, Math.min(Number(page)||0,1000));
@@ -59,13 +75,14 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     return screen(chat, `📋 <b>Your monitors</b> · Page ${page+1}\n\n🟢 Watching · ⏸ Paused · 🛡 Access blocked · 🏁 Finished\n\nTap a monitor to see its status and controls.`, buttons, mid);
   }
   async function detail(chat,id,mid) {
+    const tz=await timezone(chat);
     const m = await owned(chat,id);
     if (!m) return screen(chat,'That monitor is unavailable. Open your list to choose another.',[[button('📋 My monitors','list:0')]],mid);
     const keywords = m.keywords?.keywords || [];
     const actions = [[button('🔄 Check now',`check:${id}`,'primary'),button(m.paused||m.completed?'▶️ Resume':'⏸ Pause',`toggle:${id}`)],
       [button('✏️ Edit',`edit:${id}`),button('🗑 Delete',`delete:${id}`,'danger')],
       [button('📜 Recent activity',`history:${id}`),button('← My monitors','list:0')]];
-    return screen(chat, `${statusIcon(m)} <b>${escapeHtml(m.title || siteName(m.url))}</b>\n${escapeHtml(m.url)}\n\n<b>Watching:</b> ${m.checkUpdates?'Content changes':'Keywords'}\n${keywords.length?`<b>Keywords:</b> ${escapeHtml(keywords.join(', '))}\n`:''}<b>Schedule:</b> Every ${m.interval_minutes || 10} minutes\n<b>Status:</b> ${escapeHtml(m.paused?'paused':m.completed?'finished':m.last_status)}\n<b>Last check:</b> ${stamp(m.last_checked_at)}\n<b>Last success:</b> ${stamp(m.last_success_at)}\n<b>Next check:</b> ${m.paused||m.completed?'Paused':stamp(m.next_check_at)}\n<b>Source:</b> ${escapeHtml(m.fetch_config?.mode || 'browser')}${m.fetch_config?.selector?` · <code>${escapeHtml(m.fetch_config.selector)}</code>`:''}\n\n${m.last_error?`⚠️ ${escapeHtml(m.last_error.slice(0,300))}\n\n`:''}<i>Check now requests a background job; startup can take a few minutes.</i>`,actions,mid);
+    return screen(chat, `${statusIcon(m)} <b>${escapeHtml(m.title || siteName(m.url))}</b>\n${escapeHtml(m.url)}\n\n<b>Watching:</b> ${m.checkUpdates?'Content changes':'Keywords'}\n${keywords.length?`<b>Keywords:</b> ${escapeHtml(keywords.join(', '))}\n`:''}<b>Schedule:</b> Every ${formatInterval(m.interval_minutes || 10)}\n<b>Status:</b> ${escapeHtml(m.paused?'paused':m.completed?'finished':m.last_status)}\n<b>Last check:</b> ${formatTimestamp(m.last_checked_at,tz)}\n<b>Last success:</b> ${formatTimestamp(m.last_success_at,tz)}\n<b>Next check:</b> ${m.paused||m.completed?'Paused':formatTimestamp(m.next_check_at,tz)}\n<b>Source:</b> ${escapeHtml(m.fetch_config?.mode || 'browser')}${m.fetch_config?.selector?` · <code>${escapeHtml(m.fetch_config.selector)}</code>`:''}\n\n${m.last_error?`⚠️ ${escapeHtml(m.last_error.slice(0,300))}\n\n`:''}<i>Check now requests a background job; startup can take a few minutes.</i>`,actions,mid);
   }
   function draftButtons(d, rows) {
     return rows.map(row=>row.map(([text,value,style])=>button(text,`draft:${d.nonce}:${value}`,style)));
@@ -73,7 +90,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
   async function review(chat,d,mid) {
     d.step='review'; await save(chat,d);
     const c=d.fetch_config;
-    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${d.interval_minutes} minutes\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n\n<i>Only public pages are supported. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
+    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n\n<i>Only public pages are supported. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
       draftButtons(d,[[['💚 Save monitor','confirm','success']],[['⚙️ Advanced settings','advanced']],[['✖️ Discard draft','cancel']]]),mid);
   }
   async function prompt(chat,d,mid) {
@@ -175,6 +192,11 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     let action=callback?.data;
     if(!action) {
       if(['/start','/menu'].includes(command))action='home';
+      else if(command==='/timezone') {
+        const value=text.split(/\s+/).slice(1).join(' ');
+        if(value)return saveTimezone(chatId,value);
+        action='timezone';
+      }
       else if(command==='/help')action='help';
       else if(command==='/cancel') {await clear(chatId);return screen(chatId,'Draft discarded. Your saved monitors are unchanged.',homeButtons());}
       else if(['/list_update_requests','/list_keyword_check_requests','/monitors'].includes(command))action='list:0';
@@ -185,6 +207,8 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       else return;
     }
     if(action==='home')return dashboard(chatId,mid);
+    if(action==='timezone')return timezoneMenu(chatId,mid);
+    if(action.startsWith('tz:'))return saveTimezone(chatId,action.slice(3),mid);
     if(action==='help')return screen(chatId,'💡 <b>Your monitoring guide</b>\n\n<b>1.</b> Add a public page.\n<b>2.</b> Choose content changes or keywords.\n<b>3.</b> Pick a schedule and save.\n\n🧠 AI summarizes detected changes. If AI is unavailable, you still get a factual change excerpt.\n🛡 A CAPTCHA or access block gets a notice, not a false content alert. The last good snapshot stays safe.\n🔎 Keywords alert on first appearance, then re-arm after disappearing.\n⏱ Check now requests a job, subject to a two-minute cooldown.\n\nUse /cancel to discard an unfinished draft. Advanced settings support CSS targets, iframe targets, scrolling, HTML, feeds and JSON.\n\n<i>Only public pages are supported. Site restrictions and runner delays can prevent a check.</i>',homeButtons(),mid);
     if(action==='new')return screen(chatId,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> - announcements, prices, application pages.\n🔎 <b>Keywords</b> - get notified when a word or phrase appears.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],...backHome()],mid);
     if(action.startsWith('new:'))return begin(chatId,action.slice(4),mid);
@@ -213,8 +237,9 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       return screen(chatId,notice,[[button('← Monitor',`view:${id}`)]],mid);
     }
     if(verb==='history') {
+      const tz=await timezone(chatId);
       const events=await db.request(`monitor_events?monitor_id=eq.${q(id)}&order=created_at.desc&limit=5`);
-      return screen(chatId,`📜 <b>Recent activity</b>\n\n${events?.length?events.map(e=>`<b>${escapeHtml(e.status)}</b> · ${stamp(e.created_at)}\n${escapeHtml((e.summary||'').slice(0,350))}`).join('\n\n'):'No checks recorded yet.'}`,[[button('← Monitor',`view:${id}`)]],mid);
+      return screen(chatId,`📜 <b>Recent activity</b>\n\n${events?.length?events.map(e=>`<b>${escapeHtml(e.status)}</b> · ${formatTimestamp(e.created_at,tz)}\n${escapeHtml((e.summary||'').slice(0,350))}`).join('\n\n'):'No checks recorded yet.'}`,[[button('← Monitor',`view:${id}`)]],mid);
     }
   };
 }

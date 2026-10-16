@@ -53,5 +53,17 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 result=alert(row,heading,'Notice')
                 self.assertTrue(result['payload']['text'].startswith(f'<b>{label}</b>'))
 
+    async def test_alert_timestamp_uses_saved_timezone_and_metadata_is_not_sent_to_telegram(self):
+        store=Store(['updates']);session=Session()
+        store.items[0]['payload']['_checked_at']='2026-10-16T12:00:00Z'
+        request=store.request
+        async def preferences(path,method='GET',body=None):
+            if path.startswith('bot_preferences'):return [{'timezone':'Africa/Lagos'}]
+            return await request(path,method,body)
+        store.request=preferences
+        with patch.dict(os.environ,{'BOT_TOKEN':'main-offline-token'}):await deliver_notifications(store,session,'offline-owner')
+        self.assertIn('13:00',session.payloads[0]['text']);self.assertIn('Africa/Lagos',session.payloads[0]['text'])
+        self.assertNotIn('_checked_at',session.payloads[0])
+
 
 if __name__=='__main__':unittest.main()

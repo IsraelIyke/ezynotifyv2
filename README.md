@@ -37,6 +37,7 @@ The conversation handler, AI gateway, and scheduling endpoint run in **Supabase 
 - Page-change and keyword monitors with names, schedules, repeat/one-shot behavior, and alert detail preferences.
 - Durable, expiring drafts; nothing is created or edited until the user confirms. Cancelling an edit leaves the saved monitor intact.
 - Paginated monitor lists, pause/resume, manual checks with a two-minute cooldown, and recent activity.
+- Saved timezone preferences for local monitor times, activity and alert timestamps, including daylight saving. Durations display as minutes, hours or days.
 - Browser rendering with bounded readiness waits, optional scrolling, CSS region targeting, ignored regions, iframe targeting, and open shadow-root extraction.
 - HTML, RSS/Atom, text and JSON modes for sources that do not need a browser; conditional HTTP requests reuse valid ETags/Last-Modified values.
 - Shared fetches for identical URLs/configurations, short-lived caching, per-domain pacing, robots.txt checks, bounded concurrency and retry/backoff.
@@ -72,7 +73,7 @@ Requirements: a Supabase project, a Telegram bot token from BotFather, an AI ser
 
 ### 1. Database
 
-On a fresh project, run `supabase/schema.sql` first. On both fresh and existing projects, apply `supabase/migrations/202610160001_monitoring_v3.sql`. Existing rows are retained. The migration converts legacy JSON fields to JSONB, adds scheduling/status fields, and creates sessions, history, leases, fetch cache and notification outbox tables.
+On a fresh project, run `supabase/schema.sql` first. On both fresh and existing projects, apply the files in `supabase/migrations/` in order. Existing rows are retained. The migrations add scheduling/status fields, sessions, history, leases, fetch cache, notification outbox, user records and timezone preferences.
 
 Internal tables and RPCs are restricted to `service_role`. The webhook checks Telegram chat ownership, and the manual-check transaction checks ownership again. Never expose the service-role key in client-side code.
 
@@ -141,7 +142,21 @@ To run a real worker pass, copy `.env.example` to `.env`, configure the worker s
 
 ## Commands
 
-`/start` opens the dashboard, `/new` creates a monitor, `/monitors` opens the list, `/help` explains monitoring, and `/cancel` discards a draft. Existing `/new_update_monitor`, `/new_keyword_check`, `/list_update_requests` and `/list_keyword_check_requests` commands remain available. Editing/deletion use inline buttons.
+`/start` opens the dashboard, `/new` creates a monitor, `/monitors` opens the list, `/timezone` opens local-time settings, `/help` explains monitoring, and `/cancel` discards a draft. Existing `/new_update_monitor`, `/new_keyword_check`, `/list_update_requests` and `/list_keyword_check_requests` commands remain available. Editing/deletion use inline buttons.
+
+Choose a timezone with the dashboard button or send `/timezone Africa/Lagos` (or another IANA city timezone). Telegram does not provide the device timezone, so UTC is used until the user chooses. Stored timestamps stay in UTC; display times use the saved preference. Check intervals remain elapsed durations.
+
+## User records and usage counts
+
+The admin-only `bot_users` table records Telegram ID, username, first/last name, language, first/last interaction time and interaction count. Profiles update when the user interacts; duplicate update retries do not inflate the counter. Historical monitor owners are backfilled with unknown names and no invented recent activity.
+
+In the Supabase SQL editor, run:
+
+```sql
+select * from public.bot_usage_stats;
+```
+
+The view reports total users, active users over 24 hours/7 days/30 days, users with monitors, and total/active monitors. Activity means bot interaction, not background monitoring. These records and preferences are protected by row-level security and are unavailable to public API keys.
 
 ## Operational limits
 

@@ -12,6 +12,7 @@ from .fetcher import Fetcher
 from .models import FetchResult,fetch_key,utcnow
 from .processor import process
 from .store import Store
+from .timefmt import local_timestamp
 
 logger=logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ logger=logging.getLogger(__name__)
 async def deliver_notifications(store,session,owner):
     rows=await store.rpc('claim_notifications',{'p_owner':owner,'p_limit':100})
     failed=0
+    timezones={}
     for item in rows:
         try:
             # A deleted/paused monitor should not deliver stale queued alerts.
@@ -28,6 +30,16 @@ async def deliver_notifications(store,session,owner):
             token=os.getenv('BOT_TOKEN')
             if not token:raise RuntimeError('Alert bot token is not configured')
             payload={**item['payload'],'chat_id':item['chat_id']}
+            checked_at=payload.pop('_checked_at',item.get('created_at'))
+            if checked_at:
+                chat=str(item['chat_id'])
+                if chat not in timezones:
+                    preferences=await store.request('bot_preferences?'+urlencode({'chat_id':'eq.'+chat,'select':'timezone','limit':'1'}))
+                    timezones[chat]=preferences[0].get('timezone','UTC') if preferences else 'UTC'
+                local=local_timestamp(checked_at,timezones[chat])
+                if local:
+                    import html
+                    payload['text']=payload.get('text','')+'\n\n🕒 '+html.escape(local)
             if not payload.get('text','').startswith(('<b>🔎 KEYWORD WATCH</b>','<b>🔄 PAGE UPDATES</b>')):
                 updates=item['channel']=='updates' or (item['channel']=='main' and monitor[0].get('checkUpdates'))
                 payload['text']=('<b>🔄 PAGE UPDATES</b>' if updates else '<b>🔎 KEYWORD WATCH</b>')+'\n'+payload.get('text','')
@@ -89,6 +101,7 @@ async def run():
                         if cooldown:result=FetchResult('rate_limited',reason='This website requested a pause between checks.',retry_after=cooldown)
                         else:result=FetchResult(**cached['result']) if fresh else await fetcher.fetch(row.get('url') or '',row.get('fetch_config') or {},cached['result'] if cached else None)
                         if result.status=='rate_limited':await store.set_domain_cooldown(domain,result.retry_after)
+                        if result.status=='internal_error':errors+=1
                         if result.status=='ok' and not fresh:await store.set_cache(key,result)
                         summaries={}
                         class SharedAI:

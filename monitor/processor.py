@@ -23,7 +23,7 @@ def alert(row,heading,text,channel='main'):
     kind='🔄 PAGE UPDATES' if channel=='updates' or (channel=='main' and row.get('checkUpdates')) else '🔎 KEYWORD WATCH'
     text=text.replace('\u2014','-')
     message=f'<b>{kind}</b>\n{heading}\n<b>{title}</b>\n\n{html.escape(text[:1900])}\n\n<a href="{url}">Open website ↗</a>'
-    return {'channel':channel,'payload':{'text':message,'parse_mode':'HTML','link_preview_options':{'is_disabled':True},'reply_markup':{'inline_keyboard':[[{'text':'📋 My monitors','callback_data':'list:0'}]]}}}
+    return {'channel':channel,'payload':{'text':message,'_checked_at':utcnow().isoformat(),'parse_mode':'HTML','link_preview_options':{'is_disabled':True},'reply_markup':{'inline_keyboard':[[{'text':'📋 My monitors','callback_data':'list:0'}]]}}}
 
 
 async def process(row,result,ai,now=None):

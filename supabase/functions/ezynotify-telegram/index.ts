@@ -23,6 +23,10 @@ Deno.serve(async (req: Request) => {
       if(!locked)return new Response('Busy; retry',{status:503});
     }
     if(!await db.rpc('claim_bot_update',{p_id:update.update_id}))return new Response('OK');
+    const from=update.callback_query?.from || update.message?.from;
+    if(chat?.type==='private' && from && !from.is_bot && String(from.id)===String(chat.id)) {
+      await db.rpc('record_bot_user',{p_chat:String(chat.id),p_profile:{username:from.username||null,first_name:from.first_name||null,last_name:from.last_name||null,language_code:from.language_code||null},p_update_id:update.update_id});
+    }
     const bot=createBot({db,telegram,dispatch:()=>dispatchChecks(db,env)});
     await bot(update);
     await db.request(`bot_updates?update_id=eq.${update.update_id}`,{method:'PATCH',body:{state:'done'}});

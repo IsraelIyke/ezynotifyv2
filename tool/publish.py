@@ -9,6 +9,7 @@ from control import ROOT,read_env
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--push',action='store_true',help='Requires explicit authorization to publish to main')
+    parser.add_argument('--message',default='Improve monitoring reliability and bot flows')
     args=parser.parse_args()
     values=read_env(ROOT/'.secrets'/'deployment.env')
     env=os.environ.copy()
@@ -38,7 +39,7 @@ def main():
         if any(value in text for value in private_values):raise RuntimeError('A credential was found in staged content')
         if re.search(r'(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gsk_[A-Za-z0-9]{20,})',text):raise RuntimeError('A credential-like value was found in staged content')
     git('diff','--cached','--check')
-    git('commit','-m','Unify EzyNotify on Supabase with Groq summaries and resilient browser monitoring')
+    git('commit','-m',args.message)
     print('Prepared local commit:',git('rev-parse','--short','HEAD').decode().strip())
     print('Files checked for credentials:',len(files))
 

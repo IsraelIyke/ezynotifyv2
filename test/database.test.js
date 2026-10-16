@@ -13,6 +13,14 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
       "shouldSendDetailedUpdates" boolean,"checkUpdates" boolean default false,completed boolean default false);
       insert into ezynotify(url,reference,"telegramID",keywords) values('https://example.com','Preserve me',123,'{"keywords":["news"]}');`);
     await db.exec(await readFile(new URL('../supabase/migrations/202610160001_monitoring_v3.sql',import.meta.url),'utf8'));
+    await db.exec(await readFile(new URL('../supabase/migrations/202610160002_users_and_timezones.sql',import.meta.url),'utf8'));
+    await t.test('historical owners are backfilled without inflating active usage, and profile updates are idempotent',async()=>{
+      let r=await db.query('select * from bot_usage_stats');assert.equal(r.rows[0].total_users,1);assert.equal(r.rows[0].active_last_24h,0);
+      await db.query("select record_bot_user('123','{\"first_name\":\"Test\",\"username\":\"testuser\"}',12)");
+      await db.query("select record_bot_user('123','{\"first_name\":\"Test\",\"username\":\"testuser\"}',12)");
+      r=await db.query('select interaction_count from bot_users');assert.equal(Number(r.rows[0].interaction_count),1);
+      r=await db.query('select * from bot_usage_stats');assert.equal(r.rows[0].active_last_24h,1);
+    });
     await t.test('original rows survive json-to-jsonb migration',async()=>{
       const {rows}=await db.query('select reference,keywords,pg_typeof(keywords)::text as kind from ezynotify where id=1');
       assert.equal(rows[0].reference,'Preserve me');assert.deepEqual(rows[0].keywords,{keywords:['news']});assert.equal(rows[0].kind,'jsonb');

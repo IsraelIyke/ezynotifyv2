@@ -18,6 +18,7 @@ class FixtureFetcher(Fetcher):
           '/challenge': '<html><body>Verify you are human<div class="cf-turnstile"></div></body></html>',
           '/missing': '<html><body>No target</body></html>',
           '/normal': '<html><body><nav>Menu</nav><main>Welcome <span class="clock">12:00</span></main></body></html>',
+          '/long': '<html><head><title>Public website</title></head><body><main>'+('A realistic public announcement with readable content. '*30)+'</main></body></html>',
           '/redirect': '',
           '/data': '{"price": 42, "available": true}',
         }
@@ -66,6 +67,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_json_source(self):
         result=await self.fetcher.fetch('https://fixture.test/data',{'mode':'feed'})
         self.assertEqual(result.status,'ok');self.assertIn('42',result.text)
+
+    async def test_realistic_page_over_300_characters_does_not_crash(self):
+        result=await self.fetcher.fetch('https://fixture.test/long',{'mode':'browser'})
+        self.assertEqual(result.status,'ok');self.assertGreater(len(result.text),300)
 
     async def test_network_failure_is_distinct_from_captcha_and_unsafe_destination(self):
         result=await self.fetcher.fetch('https://fixture.test/offline',{'mode':'browser'})
