@@ -16,7 +16,7 @@ def settings():
 
 
 def set_secrets(values):
-    names=['BOT_TOKEN','TELEGRAM_WEBHOOK_SECRET','DISPATCH_SECRET','MONITOR_AI_SECRET','GROQ_API_KEY','GROQ_MODEL','GROQ_VISION_MODEL','GROQ_REASONING_EFFORT','GROQ_VISION_REASONING_EFFORT','GITHUB_REPOSITORY','GITHUB_WORKFLOW','GITHUB_REF','GITHUB_DISPATCH_TOKEN']
+    names=['BOT_TOKEN','ADMIN_BOT_TOKEN','TELEGRAM_WEBHOOK_SECRET','DISPATCH_SECRET','MONITOR_AI_SECRET','GROQ_API_KEY','GROQ_MODEL','GROQ_VISION_MODEL','GROQ_REASONING_EFFORT','GROQ_VISION_REASONING_EFFORT','GITHUB_REPOSITORY','GITHUB_WORKFLOW','GITHUB_REF','GITHUB_DISPATCH_TOKEN']
     secrets=[{'name':name,'value':values[name]} for name in names if name in values]
     management(f'projects/{values["PROJECT_REF"]}/secrets',secrets,method='POST')
     print('Updated Supabase secrets:',', '.join(s['name'] for s in secrets))

@@ -6,7 +6,7 @@ Deno.serve(async(req:Request)=>{
   if(!await secureEquals(req.headers.get('x-dispatch-secret'),env('DISPATCH_SECRET')))return new Response('Unauthorized',{status:401});
   try {
     const db=createDatabase(envRequired(env,'SUPABASE_URL'),envRequired(env,'SUPABASE_SERVICE_ROLE_KEY'));
-    return Response.json(await deliverAdminNotifications({db,telegram:createTelegram(envRequired(env,'BOT_TOKEN'))}));
+    return Response.json(await deliverAdminNotifications({db,telegram:createTelegram(envRequired(env,'ADMIN_BOT_TOKEN'))}));
   } catch {
     console.error('Admin notification delivery could not complete.');
     return Response.json({error:'Delivery unavailable'},{status:502});

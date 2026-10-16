@@ -43,7 +43,7 @@ The conversation handler, AI gateway, and scheduling endpoint run in **Supabase 
 - Shared fetches for identical URLs/configurations, short-lived caching, per-domain pacing, robots.txt checks, bounded concurrency and retry/backoff.
 - Case-insensitive keyword appearance alerts. Repeating monitors re-arm a keyword after it disappears. One-shot monitors finish after their first match/change.
 - AI as the primary change summarizer, with labeled factual excerpts if AI is unavailable.
-- All notifications arrive in the main bot, with distinct **🔎 KEYWORD WATCH** and **🔄 PAGE UPDATES** labels, including failure and recovery alerts.
+- All user notifications arrive in the main bot, with distinct **🔎 KEYWORD WATCH** and **🔄 PAGE UPDATES** labels, including failure and recovery alerts. Operator failure diagnostics use a separate admin bot.
 - CAPTCHA/challenge and login/access-error detection. Blocked reads preserve the last good snapshot, send one notice per failure episode, back off, and announce recovery.
 - Atomic baseline/history/outbox writes, stale-result rejection after user edits, worker leases, workflow concurrency protection, and retried notifications.
 
@@ -82,6 +82,7 @@ Internal tables and RPCs are restricted to `service_role`. The webhook checks Te
 | Secret | Purpose |
 | --- | --- |
 | `BOT_TOKEN` | Main Telegram bot for conversations and alerts |
+| `ADMIN_BOT_TOKEN` | Separate Telegram bot for operator failure diagnostics; Supabase only |
 | `TELEGRAM_WEBHOOK_SECRET` | Validates Telegram's secret header |
 | `DISPATCH_SECRET` | Authenticates Cron/admin requests to the dispatcher |
 | `MONITOR_AI_SECRET` | Authenticates worker requests to the AI gateway |
@@ -175,6 +176,6 @@ Delivery is at least once: a Telegram send that succeeds just before a worker cr
 MIT. Both original components are by Israel Ikechukwu. See [LICENSE](LICENSE).
 ## Admin alerts and privacy
 
-Every completed failed website check queues an admin alert in Supabase, including consecutive failures. Configure the recipient in the service-only `monitor_admin_settings` table. The `ezynotify-notifications` Edge Function sends these alerts through the main bot; an authenticated Supabase Cron job runs every minute. Delivery retries are independent of user-facing failure suppression. Alerts include the hostname, monitor ID/type, reason and timestamp, excluding URL paths, queries and page content.
+Every completed failed website check queues an admin alert in Supabase, including consecutive failures. Configure the recipient in the service-only `monitor_admin_settings` table and the separate bot token as the Supabase secret `ADMIN_BOT_TOKEN`. The `ezynotify-notifications` Edge Function uses this separate bot; an authenticated Supabase Cron job runs every minute. It requires that secret and does not fall back to the main bot. User keyword, change, failure and recovery notices continue through the main bot. Delivery retries are independent of user-facing failure suppression. Alerts include the hostname, monitor ID/type, reason and timestamp, excluding URL paths, queries and page content.
 
 The `/privacy` command and dashboard button explain responsible monitoring, robots.txt, permissions, data processing and limitations of liability. See [PRIVACY.md](PRIVACY.md). Access, correction and deletion requests are recorded in the service-only `privacy_requests` table for manual operator review. Review this table regularly; submitting a request does not automatically delete records.
