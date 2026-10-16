@@ -91,6 +91,15 @@ class ExtractionTests(unittest.TestCase):
 
 
 class ResolverTests(unittest.IsolatedAsyncioTestCase):
+    async def test_domain_retry_after_prevents_more_requests(self):
+        import time
+        from monitor.fetcher import Fetcher
+        fetcher=Fetcher();fetcher.domain_retry_until['example.com']=time.monotonic()+3600
+        fetcher.request=AsyncMock()
+        result=await fetcher.fetch('https://example.com/another-page',{})
+        self.assertEqual(result.status,'rate_limited');self.assertGreater(result.retry_after,3500)
+        fetcher.request.assert_not_called()
+
     async def test_dns_rebinding_and_mixed_private_records_are_blocked(self):
         records=[(socket.AF_INET,socket.SOCK_STREAM,6,'',('1.1.1.1',443)),(socket.AF_INET,socket.SOCK_STREAM,6,'',('127.0.0.1',443))]
         with patch.object(asyncio.get_running_loop(),'getaddrinfo',new=AsyncMock(return_value=records)):

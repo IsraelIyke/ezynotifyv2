@@ -8,10 +8,11 @@ test('summarizer reads the current model secret on every call and treats excerpt
     assert.equal(url,'https://api.groq.com/openai/v1/chat/completions');
     const body=JSON.parse(options.body);models.push(body.model);
     assert.match(body.messages[0].content,/untrusted data/);
-    return {ok:true,json:async()=>({choices:[{message:{content:'Price changed from 10 to 12.'}}]})};
+    return {ok:true,json:async()=>({choices:[{message:{content:'Price changed\u2014from 10 to 12.'}}]})};
   };
   const input={action:'summarize',changes:[{removed:'10',added:'12'}]};
-  assert.equal((await runAI(input,k=>settings[k],fetcher)).source,'groq');
+  const result=await runAI(input,k=>settings[k],fetcher);
+  assert.equal(result.source,'groq');assert.ok(!result.summary.includes('\u2014'));
   settings.GROQ_MODEL='model-two';await runAI(input,k=>settings[k],fetcher);
   assert.deepEqual(models,['model-one','model-two']);
 });

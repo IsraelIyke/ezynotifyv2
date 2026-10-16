@@ -2,7 +2,7 @@
 
 **Your websites. Your updates. Less checking.**
 
-Watch public pages for changes or keywords and receive clear Telegram alerts with Groq summaries. This repository unifies the former `ezynotify-bot` webhook and `ezynotifyv2` checker.
+Watch public pages for changes or keywords and receive clear Telegram alerts with AI summaries. This repository unifies the former `ezynotify-bot` webhook and `ezynotifyv2` checker.
 
 [Open @ezynotify_bot](https://t.me/ezynotify_bot)
 
@@ -22,7 +22,7 @@ Supabase Cron ──► ezynotify-dispatch        │
                             ▼             ▼
                      Python / Playwright worker
                             │
-                            ├──► ezynotify-ai ──► Groq
+                            ├──► ezynotify-ai ──► AI service
                             └──► atomic snapshots, history & notification outbox
                                               │
                                               ▼
@@ -41,7 +41,8 @@ The conversation handler, AI gateway, and scheduling endpoint run in **Supabase 
 - HTML, RSS/Atom, text and JSON modes for sources that do not need a browser; conditional HTTP requests reuse valid ETags/Last-Modified values.
 - Shared fetches for identical URLs/configurations, short-lived caching, per-domain pacing, robots.txt checks, bounded concurrency and retry/backoff.
 - Case-insensitive keyword appearance alerts. Repeating monitors re-arm a keyword after it disappears. One-shot monitors finish after their first match/change.
-- Groq as the primary change summarizer, with labeled factual excerpts if AI is unavailable.
+- AI as the primary change summarizer, with labeled factual excerpts if AI is unavailable.
+- All notifications arrive in the main bot, with distinct **🔎 KEYWORD WATCH** and **🔄 PAGE UPDATES** labels, including failure and recovery alerts.
 - CAPTCHA/challenge and login/access-error detection. Blocked reads preserve the last good snapshot, send one notice per failure episode, back off, and announce recovery.
 - Atomic baseline/history/outbox writes, stale-result rejection after user edits, worker leases, workflow concurrency protection, and retried notifications.
 
@@ -52,7 +53,7 @@ The profile image is untouched. Telegram controls the chat theme; button colors 
 ```text
 supabase/functions/ezynotify-telegram/  Telegram webhook
 supabase/functions/ezynotify-dispatch/  Authenticated scheduler endpoint
-supabase/functions/ezynotify-ai/        Authenticated Groq gateway
+supabase/functions/ezynotify-ai/        Authenticated AI gateway
 supabase/functions/_shared/            Bot flows and service clients
 supabase/schema.sql                    Initial table for fresh projects
 supabase/migrations/                   Upgrade for the legacy table
@@ -67,7 +68,7 @@ tool/                                 Deployment and verification helpers
 
 ## Deploy
 
-Requirements: a Supabase project, a Telegram bot token from BotFather, a Groq key, a GitHub repository with Actions, Python 3.12+, Node.js 22+, and the Supabase CLI. Python deployment helpers also use PyNaCl when setting encrypted GitHub secrets.
+Requirements: a Supabase project, a Telegram bot token from BotFather, an AI service key, a GitHub repository with Actions, Python 3.12+, Node.js 22+, and the Supabase CLI. Python deployment helpers also use PyNaCl when setting encrypted GitHub secrets.
 
 ### 1. Database
 
@@ -83,11 +84,7 @@ Internal tables and RPCs are restricted to `service_role`. The webhook checks Te
 | `TELEGRAM_WEBHOOK_SECRET` | Validates Telegram's secret header |
 | `DISPATCH_SECRET` | Authenticates Cron/admin requests to the dispatcher |
 | `MONITOR_AI_SECRET` | Authenticates worker requests to the AI gateway |
-| `GROQ_API_KEY` | Groq API key |
-| `GROQ_MODEL` | Primary summary model ID |
-| `GROQ_VISION_MODEL` | Optional vision model for ambiguous challenge/error pages |
-| `GROQ_REASONING_EFFORT` | Optional reasoning setting accepted by the chosen summary model |
-| `GROQ_VISION_REASONING_EFFORT` | Optional reasoning setting for the vision model |
+| AI credentials and model settings | Set the provider key, summary model, optional vision model and reasoning options using the exact secret names in [the configuration template](.env.example) |
 | `GITHUB_REPOSITORY` | `owner/repository` |
 | `GITHUB_WORKFLOW` | `ezynotify.yml` |
 | `GITHUB_REF` | Worker branch, normally `main` |
@@ -95,7 +92,7 @@ Internal tables and RPCs are restricted to `service_role`. The webhook checks Te
 
 Supabase automatically supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; do not upload those reserved names as custom function secrets.
 
-**Change the summarizer anytime:** update `GROQ_MODEL` under Supabase → Edge Functions → Secrets. No code change or GitHub secret change is needed; requests use the new setting after secret propagation. Update or clear the optional reasoning setting if the replacement model supports different parameters. Set `GROQ_VISION_MODEL` empty to disable AI classification. Model availability depends on your Groq account.
+**Change the summarizer anytime:** update the summary-model secret listed in [.env.example](.env.example) under Supabase → Edge Functions → Secrets. No code change or GitHub secret change is needed; requests use the new setting after secret propagation. Update or clear the optional reasoning setting if the replacement model supports different parameters. Leave the vision-model secret empty to disable AI classification. Model availability depends on your provider account.
 
 Deploy:
 
@@ -111,7 +108,7 @@ Their platform JWT checks are disabled in `supabase/config.toml` because each fu
 
 Configure `SUPABASE_URL`, `SUPABASE_KEY` (service-role key), `BOT_TOKEN`, `MONITOR_AI_ENDPOINT` and `MONITOR_AI_SECRET` in GitHub Actions. The AI endpoint is `https://YOUR_REF.supabase.co/functions/v1/ezynotify-ai`.
 
-The worker needs neither the Groq key nor a model ID in production. Both stay in Supabase. Old separate keyword/update tokens are supported as a fallback only when `BOT_TOKEN` is absent.
+The worker needs neither the AI service key nor a model ID in production. Both stay in Supabase. All keyword, change, failure and recovery notifications use the same `BOT_TOKEN` as the conversation handler. Separate keyword/update bots are no longer used; a missing main token fails delivery and preserves the queued alert for retry.
 
 Push the worker workflow to GitHub. It declares `workflow_dispatch`, an optional `monitor_id` input, a 20-minute job timeout and concurrency protection. It installs the matching Playwright Chromium version. It has no independent cron schedule, so Supabase is the scheduling authority.
 
@@ -121,7 +118,7 @@ Store `ezynotify_project_url` and `ezynotify_dispatch_secret` in Supabase Vault,
 
 Register the Telegram webhook at `https://YOUR_REF.supabase.co/functions/v1/ezynotify-telegram`, with `secret_token` equal to `TELEGRAM_WEBHOOK_SECRET`, `allowed_updates` set to `message` and `callback_query`, and `max_connections` set to 1. Keep pending updates when migrating. Disable the old checker schedule before switching so two implementations cannot update the same baselines.
 
-The helper `tool/deploy.py bot` validates `@ezynotify_bot`, updates its long/short description, commands and command menu, and switches its webhook. It never calls a profile-photo method.
+The helper `tool/deploy.py bot` validates `@ezynotify_bot`, updates its long/short description, commands and command menu, and switches its webhook. It never calls a profile-photo method. After cutover, disable the old Vercel deployment in its dashboard: switching a Telegram webhook does not disable the former public endpoint.
 
 Deployment helpers read private credentials from ignored `.secrets/deployment.env`. `tool/prepare-deployment.py` is a convenience for this workspace's user-authorized credential locations; other installations should provide their own environment/secrets. Never commit `.secrets`, `.env`, or secret-bearing logs.
 
@@ -140,7 +137,7 @@ python -m unittest discover -s test -p 'test_*.py' -v
 
 Tests use mocked service clients, embedded PostgreSQL and real Chromium with in-memory page fixtures. They do not send Telegram messages or write to your live Supabase project.
 
-To run a real worker pass, copy `.env.example` to `.env`, configure the worker settings, then run `python ezynotify.py`. This reads/writes Supabase and can send real alerts. For local direct Groq calls without the Edge gateway, omit `MONITOR_AI_ENDPOINT` and supply `GROQ_API_KEY`, `GROQ_MODEL` and optionally `GROQ_VISION_MODEL`.
+To run a real worker pass, copy `.env.example` to `.env`, configure the worker settings, then run `python ezynotify.py`. This reads/writes Supabase and can send real alerts. For local direct AI calls without the Edge gateway, omit `MONITOR_AI_ENDPOINT` and supply the provider credentials and model settings from the configuration template.
 
 ## Commands
 

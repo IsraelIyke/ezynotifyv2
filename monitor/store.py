@@ -29,3 +29,15 @@ class Store:
     async def set_cache(self,key,result):
         from .models import utcnow
         await self.request('fetch_cache?on_conflict=cache_key','POST',{'cache_key':key,'result':result.cached(),'fetched_at':utcnow().isoformat()},'resolution=merge-duplicates')
+
+    async def domain_cooldown(self,domain):
+        from .models import utcnow
+        from datetime import datetime
+        if not domain:return 0
+        rows=await self.request('runtime_locks?'+urlencode({'name':'eq.domain:'+domain,'select':'expires_at'}))
+        return max(0,int((datetime.fromisoformat(rows[0]['expires_at'].replace('Z','+00:00'))-utcnow()).total_seconds())) if rows else 0
+
+    async def set_domain_cooldown(self,domain,seconds):
+        from .models import utcnow
+        from datetime import timedelta
+        if domain:await self.request('runtime_locks?on_conflict=name','POST',{'name':'domain:'+domain,'owner':'website-rate-limit','expires_at':(utcnow()+timedelta(seconds=max(seconds,60))).isoformat()},'resolution=merge-duplicates')

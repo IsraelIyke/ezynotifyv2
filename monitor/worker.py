@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from urllib.parse import urlencode
+from urllib.parse import urlsplit
 import uuid
 import aiohttp
 from .ai import Groq
@@ -21,14 +22,16 @@ async def deliver_notifications(store,session,owner):
     for item in rows:
         try:
             # A deleted/paused monitor should not deliver stale queued alerts.
-            monitor=await store.request('ezynotify?'+urlencode({'id':'eq.'+item['monitor_id'],'select':'id,paused'}))
+            monitor=await store.request('ezynotify?'+urlencode({'id':'eq.'+item['monitor_id'],'select':'id,paused,checkUpdates'}))
             if not monitor or monitor[0]['paused']:
                 await store.request(f'notification_outbox?id=eq.{item["id"]}&lease_owner=eq.{owner}','PATCH',{'state':'cancelled','lease_owner':None,'lease_until':None});continue
-            token=os.getenv('BOT_TOKEN') or os.getenv('TELEGRAM_UPDATES_BOT_TOKEN' if item['channel']=='updates' else 'TELEGRAM_BOT_TOKEN')
+            token=os.getenv('BOT_TOKEN')
             if not token:raise RuntimeError('Alert bot token is not configured')
             payload={**item['payload'],'chat_id':item['chat_id']}
-            # Legacy alert bots do not own the menu callbacks. Drop their keyboard.
-            if not os.getenv('BOT_TOKEN'):payload.pop('reply_markup',None)
+            if not payload.get('text','').startswith(('<b>🔎 KEYWORD WATCH</b>','<b>🔄 PAGE UPDATES</b>')):
+                updates=item['channel']=='updates' or (item['channel']=='main' and monitor[0].get('checkUpdates'))
+                payload['text']=('<b>🔄 PAGE UPDATES</b>' if updates else '<b>🔎 KEYWORD WATCH</b>')+'\n'+payload.get('text','')
+            payload['text']=payload.get('text','').replace('\u2014','-')
             async with session.post(f'https://api.telegram.org/bot{token}/sendMessage',json=payload,timeout=aiohttp.ClientTimeout(total=15)) as response:
                 result=await response.json()
                 if response.status==429:
@@ -80,7 +83,12 @@ async def run():
                         if cached:
                             from datetime import datetime
                             fresh=(utcnow()-datetime.fromisoformat(cached['fetched_at'].replace('Z','+00:00'))).total_seconds()<45
-                        result=FetchResult(**cached['result']) if fresh else await fetcher.fetch(row.get('url') or '',row.get('fetch_config') or {},cached['result'] if cached else None)
+                        try:domain=urlsplit(row.get('url') or '').hostname
+                        except ValueError:domain=None
+                        cooldown=await store.domain_cooldown(domain)
+                        if cooldown:result=FetchResult('rate_limited',reason='This website requested a pause between checks.',retry_after=cooldown)
+                        else:result=FetchResult(**cached['result']) if fresh else await fetcher.fetch(row.get('url') or '',row.get('fetch_config') or {},cached['result'] if cached else None)
+                        if result.status=='rate_limited':await store.set_domain_cooldown(domain,result.retry_after)
                         if result.status=='ok' and not fresh:await store.set_cache(key,result)
                         summaries={}
                         class SharedAI:

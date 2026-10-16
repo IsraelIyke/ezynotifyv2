@@ -40,8 +40,6 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_UPDATES_BOT_TOKEN: ${{ secrets.TELEGRAM_UPDATES_BOT_TOKEN }}
         MONITOR_AI_ENDPOINT: ${{ secrets.MONITOR_AI_ENDPOINT }}
         MONITOR_AI_SECRET: ${{ secrets.MONITOR_AI_SECRET }}
         MONITOR_ID: ${{ inputs.monitor_id }}

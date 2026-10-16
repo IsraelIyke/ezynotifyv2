@@ -26,7 +26,7 @@ export async function runAI(input,env,fetcher=fetch) {
   const result=await response.json();
   const text=result.choices?.[0]?.message?.content?.trim();
   if(!text)throw new Error('No AI output');
-  if(action==='summarize')return {summary:text.slice(0,1400),source:'groq'};
+  if(action==='summarize')return {summary:text.slice(0,1400).replace(/\u2014/g,'-'),source:'groq'};
   const classification=JSON.parse(text);
   return {status:['challenge','login','error'].includes(classification.status)&&Number(classification.confidence)>=0.9?classification.status:null};
 }

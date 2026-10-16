@@ -32,6 +32,8 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     return rows?.[0] || null;
   }
   async function screen(chat, text, rows = backHome(), messageId) {
+    text=text.replace(/\u2014/g,'-');
+    rows=rows.map(row=>row.map(b=>({...b,text:b.text.replace(/\u2014/g,'-')})));
     const payload = { chat_id:chat,text,parse_mode:'HTML',link_preview_options:{is_disabled:true},reply_markup:{inline_keyboard:rows} };
     if (messageId) {
       try { return await telegram('editMessageText', { ...payload,message_id:messageId }); }
@@ -48,7 +50,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     const rows = await db.request(`ezynotify?telegramID=eq.${q(chat)}&order=created_at.desc&offset=${page*6}&limit=7`);
     if (!rows?.length) return screen(chat, '📋 <b>Your monitors</b>\n\nNo monitors here yet. Add a public page and let EzyNotify keep an eye on it.', homeButtons(), mid);
     const items = rows.slice(0,6);
-    const buttons = items.map(m => [button(`${statusIcon(m)} ${(m.title || siteName(m.url)).slice(0,40)}`, `view:${m.id}`)]);
+    const buttons = items.map(m => [button(`${statusIcon(m)} ${m.checkUpdates?'🔄':'🔎'} ${(m.title || siteName(m.url)).slice(0,40)}`, `view:${m.id}`)]);
     const nav=[];
     if (page) nav.push(button('← Previous',`list:${page-1}`));
     if (rows.length>6) nav.push(button('Next →',`list:${page+1}`));
@@ -71,7 +73,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
   async function review(chat,d,mid) {
     d.step='review'; await save(chat,d);
     const c=d.fetch_config;
-    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${d.interval_minutes} minutes\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n\n<i>Only public pages are supported. Challenge pages are reported without replacing your saved content. Changed text is sent to Groq for summarization.</i>`,
+    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${d.interval_minutes} minutes\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n\n<i>Only public pages are supported. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
       draftButtons(d,[[['💚 Save monitor','confirm','success']],[['⚙️ Advanced settings','advanced']],[['✖️ Discard draft','cancel']]]),mid);
   }
   async function prompt(chat,d,mid) {
@@ -83,13 +85,17 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       case 'title': return screen(chat,'🏷 <b>Give it a name · 2 of 5</b>\n\nSend a short name such as “University admissions”.', choices([[['Use website name','default-title']]]),mid);
       case 'interval': return screen(chat,'⏱ <b>How often? · 3 of 5</b>\n\nChoose a check interval. Jobs may start later when the runner is busy.', choices([[['10 minutes','interval-10'],['30 minutes','interval-30']],[['1 hour','interval-60'],['6 hours','interval-360']],[['Daily','interval-1440']]]),mid);
       case 'repeat': return screen(chat,'🔁 <b>After an alert? · 4 of 5</b>\n\nKeep watching for future changes, or finish after the first result? Keyword alerts repeat only after a keyword disappears and appears again.',choices([[['Keep watching','repeat-yes','primary']],[['Finish after first result','repeat-no']]]),mid);
-      case 'detail': return screen(chat,'🧠 <b>Choose your alert · 5 of 5</b>\n\nEvery change alert gets a Groq summary. Include short added/removed excerpts too?',choices([[['Summary + excerpts','detail-yes','primary']],[['Summary only','detail-no']]]),mid);
+      case 'detail': return screen(chat,'🧠 <b>Choose your alert · 5 of 5</b>\n\nEvery change alert includes an AI summary. Include short added/removed excerpts too?',choices([[['Summary + excerpts','detail-yes','primary']],[['Summary only','detail-no']]]),mid);
       case 'advanced': return screen(chat,'⚙️ <b>Advanced settings</b>\n\nBrowser rendering handles JavaScript. HTML is faster for static pages. Feed/API mode reads RSS, Atom, or JSON.\n\nA CSS target limits monitoring to a page section. An iframe selector selects a frame first. Ignored selectors exclude noisy elements. Scrolling is bounded to five steps.', choices([[['🌐 Browser','mode-browser'],['📄 HTML','mode-html']],[['📡 Feed / API','mode-feed']],[['🎯 CSS target','set-selector'],['🧩 Iframe','set-frame']],[['🙈 Ignore regions','set-ignore'],[`${d.fetch_config.scroll?'✅':'⬜'} Scroll`,'scroll']],[['↩️ Review','review','primary']]]),mid);
       case 'selector': case 'frame': case 'ignore': return screen(chat,`🎯 <b>${d.step==='selector'?'Target CSS selector':d.step==='frame'?'Iframe CSS selector':'Ignored CSS selectors'}</b>\n\n${d.step==='ignore'?'Send a comma-separated CSS selector list, e.g. <code>nav, footer, .timestamp</code>.':'Send one CSS selector, e.g. <code>main</code> or <code>iframe#news</code>.'}\n\nSend <code>/skip</code> to clear this setting.`,cancel,mid);
       default: return review(chat,d,mid);
     }
   }
   async function begin(chat,type,mid,existing) {
+    if(!existing) {
+      const count=await db.request(`ezynotify?telegramID=eq.${q(chat)}&select=id&limit=50`);
+      if(count?.length>=50)return screen(chat,'📋 You have reached the limit of 50 monitors. Delete a monitor before adding another.',[[button('📋 My monitors','list:0')]],mid);
+    }
     const d = { step:'url',nonce:crypto.randomUUID().slice(0,8),checkUpdates:type==='updates',title:'',interval_minutes:10,shouldContinueCheck:true,shouldSendDetailedUpdates:true,keywords:{keywords:[]},fetch_config:{mode:'browser',scroll:false}, ...(existing?{
       id:String(existing.id),url:existing.url,title:existing.title||siteName(existing.url),checkUpdates:existing.checkUpdates,
       keywords:existing.keywords||{keywords:[]},interval_minutes:existing.interval_minutes,shouldContinueCheck:existing.shouldContinueCheck,
@@ -179,8 +185,8 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       else return;
     }
     if(action==='home')return dashboard(chatId,mid);
-    if(action==='help')return screen(chatId,'💡 <b>Your monitoring guide</b>\n\n<b>1.</b> Add a public page.\n<b>2.</b> Choose content changes or keywords.\n<b>3.</b> Pick a schedule and save.\n\n🧠 Groq summarizes detected changes. If AI is unavailable, you still get a factual change excerpt.\n🛡 A CAPTCHA or access block gets a notice, not a false content alert. The last good snapshot stays safe.\n🔎 Keywords alert on first appearance, then re-arm after disappearing.\n⏱ Check now requests a job, subject to a two-minute cooldown.\n\nUse /cancel to discard an unfinished draft. Advanced settings support CSS targets, iframe targets, scrolling, HTML, feeds and JSON.\n\n<i>Only public pages are supported. Site restrictions and runner delays can prevent a check.</i>',homeButtons(),mid);
-    if(action==='new')return screen(chatId,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> — announcements, prices, application pages.\n🔎 <b>Keywords</b> — get notified when a word or phrase appears.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],...backHome()],mid);
+    if(action==='help')return screen(chatId,'💡 <b>Your monitoring guide</b>\n\n<b>1.</b> Add a public page.\n<b>2.</b> Choose content changes or keywords.\n<b>3.</b> Pick a schedule and save.\n\n🧠 AI summarizes detected changes. If AI is unavailable, you still get a factual change excerpt.\n🛡 A CAPTCHA or access block gets a notice, not a false content alert. The last good snapshot stays safe.\n🔎 Keywords alert on first appearance, then re-arm after disappearing.\n⏱ Check now requests a job, subject to a two-minute cooldown.\n\nUse /cancel to discard an unfinished draft. Advanced settings support CSS targets, iframe targets, scrolling, HTML, feeds and JSON.\n\n<i>Only public pages are supported. Site restrictions and runner delays can prevent a check.</i>',homeButtons(),mid);
+    if(action==='new')return screen(chatId,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> - announcements, prices, application pages.\n🔎 <b>Keywords</b> - get notified when a word or phrase appears.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],...backHome()],mid);
     if(action.startsWith('new:'))return begin(chatId,action.slice(4),mid);
     if(action.startsWith('draft:')) {const [,nonce,...parts]=action.split(':');return draftAction(chatId,nonce,parts.join(':'),mid);}
     if(action.startsWith('list:'))return list(chatId,action.slice(5),mid);

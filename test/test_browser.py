@@ -23,6 +23,9 @@ class FixtureFetcher(Fetcher):
         }
         from urllib.parse import urlsplit
         path=urlsplit(url).path
+        if path=='/offline':
+            import aiohttp
+            raise aiohttp.ClientConnectionError('Synthetic offline fixture')
         if path=='/redirect':return 302,{'Location':'http://127.0.0.1/private'},b''
         if path=='/data':return 200,{'Content-Type':'application/json'},pages[path].encode()
         return 200,{'Content-Type':'text/html'},pages.get(path,'').encode()
@@ -58,11 +61,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_browser_redirect_cannot_reach_private_destination(self):
         result=await self.fetcher.fetch('https://fixture.test/redirect',{'mode':'browser'})
-        self.assertNotEqual(result.status,'ok');self.assertTrue(all('127.0.0.1' not in s for s in self.fetcher.requests))
+        self.assertEqual(result.status,'unsafe_url');self.assertTrue(all('127.0.0.1' not in s for s in self.fetcher.requests))
 
     async def test_json_source(self):
         result=await self.fetcher.fetch('https://fixture.test/data',{'mode':'feed'})
         self.assertEqual(result.status,'ok');self.assertIn('42',result.text)
+
+    async def test_network_failure_is_distinct_from_captcha_and_unsafe_destination(self):
+        result=await self.fetcher.fetch('https://fixture.test/offline',{'mode':'browser'})
+        self.assertEqual(result.status,'network_error');self.assertEqual(result.text,'')
 
 
 if __name__=='__main__':unittest.main()

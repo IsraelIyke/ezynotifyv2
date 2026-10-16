@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urljoin
 from urllib.robotparser import RobotFileParser
 import aiohttp
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright, TimeoutError as BrowserTimeout
+from playwright.async_api import async_playwright, TimeoutError as BrowserTimeout, Error as BrowserError
 from .models import FetchResult, normalize, utcnow
 from .security import PublicResolver, validate_url, UnsafeDestination
 
@@ -52,6 +52,7 @@ class Fetcher:
         self.semaphore=asyncio.Semaphore(concurrency)
         self.domain_locks=defaultdict(asyncio.Lock)
         self.last_request={}
+        self.domain_retry_until={}
         self.robots={}
         self.playwright=None
         self.browser=None
@@ -144,8 +145,9 @@ class Fetcher:
         page=await context.new_page()
         request_count=0
         blocked_navigation=False
+        navigation_failure=None
         async def route_request(route):
-            nonlocal request_count,blocked_navigation
+            nonlocal request_count,blocked_navigation,navigation_failure
             request=route.request;request_count+=1
             try:
                 target=validate_url(request.url)
@@ -153,21 +155,36 @@ class Fetcher:
                     await route.abort();return
                 if request.is_navigation_request():
                     allowed,_=await self.allowed(target)
-                    if not allowed:blocked_navigation=True;await route.abort();return
+                    if not allowed:
+                        blocked_navigation=True;navigation_failure=FetchResult('robots_denied',reason='This website disallows automated checks for this page.')
+                        await route.abort();return
                 # Fulfill ALL browser traffic through the validated resolver. No
                 # browser-side DNS, inherited cookies, or unvalidated redirects.
                 headers={k:v for k,v in (await request.all_headers()).items() if k.lower() not in ('host','connection','accept-encoding','authorization','proxy-authorization')}
                 status,response_headers,body=await self.request(target,headers,request.method)
+                if status in (301,302,303,307,308):
+                    destination=response_headers.get('Location') or response_headers.get('location')
+                    if destination:validate_url(urljoin(target,destination))
                 cleaned={k:v for k,v in response_headers.items() if k.lower() not in ('content-encoding','transfer-encoding','content-length','connection')}
                 await route.fulfill(status=status,headers=cleaned,body=body)
-            except (UnsafeDestination,aiohttp.ClientError,asyncio.TimeoutError,ValueError):
-                if request.is_navigation_request():blocked_navigation=True
+            except (UnsafeDestination,aiohttp.ClientError,asyncio.TimeoutError,ValueError) as error:
+                if request.is_navigation_request():
+                    blocked_navigation=True
+                    if isinstance(error,UnsafeDestination):navigation_failure=FetchResult('unsafe_url',reason='A destination resolves to a private or reserved address, or uses an unsupported URL.')
+                    elif isinstance(error,ValueError):
+                        navigation_failure=FetchResult('robots_unavailable' if 'robots.txt' in str(error) else 'too_large',reason='robots.txt could not be verified; retrying later.' if 'robots.txt' in str(error) else 'The page exceeds the supported download size.')
+                    else:navigation_failure=FetchResult('network_error',reason='The page could not be reached. Its server, DNS, or TLS connection may be unavailable.')
                 await route.abort()
         await context.route('**/*',route_request)
         await context.route_web_socket('**/*',lambda ws:ws.close())
         try:
-            response=await page.goto(url,wait_until='domcontentloaded',timeout=30000)
-            if blocked_navigation:return FetchResult('blocked',reason='A navigation destination was disallowed or unavailable.')
+            try:response=await page.goto(url,wait_until='domcontentloaded',timeout=30000)
+            except BrowserError as error:
+                if navigation_failure:return navigation_failure
+                if 'net::ERR_' in str(error):return FetchResult('network_error',reason='The website connection failed before the page loaded.')
+                if 'Download is starting' in str(error):return FetchResult('unsupported',reason='This URL starts a download. Choose a public web page or a feed/API endpoint.')
+                raise
+            if blocked_navigation:return navigation_failure or FetchResult('blocked',reason='A navigation destination was disallowed or unavailable.')
             status=response.status if response else 0
             response_headers=await response.all_headers() if response else {}
             body=await page.locator('body').inner_text(timeout=10000)
@@ -233,17 +250,24 @@ class Fetcher:
         domain=urlsplit(url).hostname
         async with self.semaphore,self.domain_locks[domain]:
             try:
+                remaining=int(self.domain_retry_until.get(domain,0)-time.monotonic())
+                if remaining>0:return FetchResult('rate_limited',reason='This website requested a pause between checks.',retry_after=remaining)
                 allowed,delay=await self.allowed(url)
                 if not allowed:return FetchResult('robots_denied',reason='This website disallows automated checks for this page.')
                 await asyncio.sleep(max(0,delay-(time.monotonic()-self.last_request.get(domain,0))))
                 for attempt in range(2):
                     async with asyncio.timeout(100):
                         result=await (self.browser_page(url,config) if config.get('mode','browser')=='browser' else self.http_page(url,config,cache))
-                    if result.status not in ('timeout','http_error') or attempt:break
+                    if result.status not in ('timeout','http_error','network_error','robots_unavailable') or attempt:break
                     await asyncio.sleep(2)
+                if result.status=='rate_limited':self.domain_retry_until[domain]=time.monotonic()+max(result.retry_after,60)
                 return result
             except UnsafeDestination as error:return FetchResult('unsafe_url',reason=str(error))
-            except (asyncio.TimeoutError,aiohttp.ClientError):return FetchResult('timeout',reason='The website could not be reached before the timeout.')
+            except asyncio.TimeoutError:return FetchResult('timeout',reason='The website could not be reached before the timeout.')
+            except aiohttp.ClientError:return FetchResult('network_error',reason='The website connection, DNS, or TLS negotiation failed.')
+            except ValueError as error:
+                if 'robots.txt' in str(error):return FetchResult('robots_unavailable',reason='robots.txt could not be verified; retrying later.')
+                return FetchResult('error',reason='The page could not be read. Check the URL and advanced selectors.')
             except Exception:
                 return FetchResult('error',reason='The page could not be read. Check the URL and advanced selectors.')
             finally:self.last_request[domain]=time.monotonic()

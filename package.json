@@ -12,7 +12,7 @@
   "keywords": [],
   "author": "",
   "license": "MIT",
-  "description": "Supabase Telegram bot with Groq summaries and a Playwright monitoring worker",
+  "description": "Supabase Telegram bot with AI summaries and a Playwright monitoring worker",
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.10"
   }

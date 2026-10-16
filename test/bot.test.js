@@ -54,6 +54,8 @@ test('complete creation survives function restarts and saves only after confirma
   assert.equal(f.monitors.size,0);
   await f.click(`draft:${d.nonce}:confirm`);
   assert.equal(f.monitors.size,1);assert.equal(f.monitors.get('1').interval_minutes,30);
+  assert.ok(!f.messages.some(m=>/groq/i.test(m.body.text||'')));
+  assert.ok(!f.messages.some(m=>(m.body.text||'').includes('\u2014')));
   await f.click(`draft:${d.nonce}:confirm`);assert.equal(f.monitors.size,1);
 });
 
