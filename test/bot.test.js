@@ -68,6 +68,22 @@ function fixture() {
   return {sessions,monitors,calls,messages,send,click,restart(){bot=createBot({db,telegram,dispatch:async()=>{},now:()=>clock});},advance(ms){clock=new Date(clock.getTime()+ms);}};
 }
 
+test('screenshots are opt-in, persist on save and are disabled by feed mode',async()=>{
+  const f=fixture();
+  f.monitors.set('7',{id:7,telegramID:'123',url:'https://example.com',title:'News',checkUpdates:true,reference:'Keep baseline',fetch_config:{mode:'browser'}});
+  await f.click('edit:7');const d=f.sessions.get('123').draft;
+  await f.click(`draft:${d.nonce}:review`);
+  assert.ok(f.messages.at(-1).body.reply_markup.inline_keyboard.flat().some(b=>b.callback_data.endsWith(':screenshot')));
+  await f.click(`draft:${d.nonce}:screenshot`);
+  assert.equal(f.sessions.get('123').draft.fetch_config.screenshot,true);
+  await f.click(`draft:${d.nonce}:confirm`);
+  const saved=f.calls.findLast(([name])=>name==='commit_bot_draft')[1].p_fields;
+  assert.equal(saved.fetch_config.screenshot,true);assert.ok(!('reference' in saved));
+  await f.click('edit:7');const next=f.sessions.get('123').draft;
+  await f.click(`draft:${next.nonce}:advanced`);await f.click(`draft:${next.nonce}:mode-feed`);
+  assert.equal(f.sessions.get('123').draft.fetch_config.screenshot,false);
+});
+
 test('complete creation survives function restarts and saves only after confirmation',async()=>{
   const f=fixture();
   await f.send('/new_update_monitor');await f.send('https://example.com/news');

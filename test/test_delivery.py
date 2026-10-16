@@ -15,7 +15,7 @@ class Response:
 
 class Session:
     def __init__(self):self.urls=[];self.payloads=[]
-    def post(self,url,**kwargs):self.urls.append(url);self.payloads.append(kwargs['json']);return Response()
+    def post(self,url,**kwargs):self.urls.append(url);self.payloads.append(kwargs.get('json',kwargs.get('data')));return Response()
 
 
 class Store:
@@ -29,6 +29,17 @@ class Store:
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_screenshot_is_uploaded_as_photo_and_remains_separate_from_text(self):
+        import base64
+        store=Store(['keywords']);session=Session()
+        store.items[0]['payload']['_photo']=base64.b64encode(b'jpeg-fixture').decode()
+        with patch.dict(os.environ,{'BOT_TOKEN':'main-offline-token'}):
+            failed=await deliver_notifications(store,session,'offline-owner')
+        self.assertEqual(failed,0);self.assertTrue(session.urls[0].endswith('/sendPhoto'))
+        fields={field[0]['name']:field[2] for field in session.payloads[0]._fields}
+        self.assertEqual(fields['photo'],b'jpeg-fixture');self.assertNotIn('_photo',fields)
+        self.assertEqual(store.patches[0]['state'],'sent')
+
     async def test_health_notifications_use_main_bot_and_keep_only_the_health_label(self):
         store=Store(['health']);session=Session()
         store.items[0]['payload']['text']='<b>🌐 WEBSITE HEALTH</b>\nWebsite unavailable'

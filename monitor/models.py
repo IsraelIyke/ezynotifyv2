@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -30,8 +30,10 @@ class FetchResult:
     etag: str = ''
     modified: str = ''
     screenshot: str = ''
+    alert_images: dict = field(default_factory=dict)
 
     def cached(self):
         value = asdict(self)
         value.pop('screenshot', None)
+        value.pop('alert_images', None)
         return value

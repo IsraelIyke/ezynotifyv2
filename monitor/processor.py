@@ -39,6 +39,8 @@ async def process(row,result,ai,now=None):
     if result.status!='ok':
         failures=(row.get('failure_count') or 0)+1
         delay=max(interval*60,min(86400,60*2**min(failures,10)),result.retry_after)
+        if failures==3:delay=max(0,result.retry_after)
+        elif failures==4:delay=max(12*60*60,result.retry_after)
         patch.update(failure_count=failures,last_error=result.reason,next_check_at=(now+timedelta(seconds=delay)).isoformat())
         # One alert per uninterrupted failure episode. Transient failures get
         # three chances before notifying; subsequent failures only back off.
@@ -49,13 +51,16 @@ async def process(row,result,ai,now=None):
             notice=alert(row,'⏸ <b>Monitor paused</b>',result.reason+' This monitor reached five consecutive failed checks. Automatic checks have stopped. Your last successful snapshot is preserved. Open My monitors, review the settings, then choose Resume to try again.',channel)
             notice['payload']['_auto_paused']=True
             notifications.append(notice)
+        elif failures==3:
+            notifications.append(alert(row,'<b>Advanced search scheduled</b>','Three normal checks failed. We will try advanced search twice, 12 hours apart. Your last successful snapshot is preserved.',channel))
+            patch['failure_notified']=True
         elif not already_notified and (persistent or failures>=3):
             if result.status=='challenge':
                 message='The website requires human verification (CAPTCHA). EzyNotify could not access it. Your last successful snapshot is preserved; checks will retry less often.'
                 heading='🛡 <b>Human verification required</b>'
             else:message=result.reason+' Your last successful snapshot is preserved. We’ll retry automatically.';heading='⚠️ <b>Check unavailable</b>'
             notifications.append(alert(row,heading,message,channel));patch['failure_notified']=True
-        event={'status':result.status,'summary':result.reason,'details':{'http_status':result.http_status,'auto_paused':failures>=5}}
+        event={'status':result.status,'summary':result.reason,'details':{'http_status':result.http_status,'auto_paused':failures>=5,'search_stage':'advanced' if failures>3 else 'normal','advanced_pending':3<=failures<5}}
         return patch,event,notifications
     patch.update(last_success_at=now.isoformat(),reference=result.text,failure_notified=False)
     if row.get('failure_notified'):
@@ -91,4 +96,15 @@ async def process(row,result,ai,now=None):
     elif new_matches:event={'status':'matched','summary':'Found: '+', '.join(new_matches)}
     else:event={'status':'unchanged' if old else 'baseline','summary':'No change detected.' if old else 'Initial snapshot saved.'}
     if (new_matches or (row.get('checkUpdates') and changed)) and not row.get('shouldContinueCheck',True):patch['completed']=True
+    if (row.get('fetch_config') or {}).get('screenshot'):
+        for kind,trigger in [('keywords',bool(new_matches)),('updates',bool(row.get('checkUpdates') and changed))]:
+            if not trigger:continue
+            captured=result.alert_images.get(kind)
+            if captured:
+                title=html.escape((row.get('title') or 'Website monitor')[:60])
+                notifications.append({'channel':kind,'payload':{'text':f'<b>{title}</b>\n'+html.escape(captured['note']),
+                    '_photo':captured['image'],'_checked_at':now.isoformat(),'parse_mode':'HTML'}})
+            else:
+                for notice in notifications:
+                    if notice['channel']==kind:notice['payload']['text']+='\n\nScreenshot unavailable for this result.'
     return patch,event,notifications

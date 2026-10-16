@@ -54,6 +54,7 @@ class Fetcher:
         self.domain_retry_until={}
         self.playwright=None
         self.browser=None
+        self.desktop_lock=asyncio.Lock()
 
     async def __aenter__(self):
         self.http=aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=PublicResolver(),use_dns_cache=False,limit=12),
@@ -134,8 +135,8 @@ class Fetcher:
             return FetchResult('ok',content,url,http_status=status,etag=response_headers.get('ETag',''),modified=response_headers.get('Last-Modified',''))
         return FetchResult('http_error',reason='Too many redirects.')
 
-    async def browser_page(self,url,config):
-        context=await self.browser.new_context(viewport={'width':1440,'height':1000},service_workers='block',accept_downloads=False)
+    async def browser_page(self,url,config,browser=None,navigate=None):
+        context=await (browser or self.browser).new_context(viewport={'width':1440,'height':1000},service_workers='block',accept_downloads=False)
         page=await context.new_page()
         request_count=0
         blocked_navigation=False
@@ -167,7 +168,7 @@ class Fetcher:
         await context.route('**/*',route_request)
         await context.route_web_socket('**/*',lambda ws:ws.close())
         try:
-            try:response=await page.goto(url,wait_until='domcontentloaded',timeout=30000)
+            try:response=await navigate(page,url) if navigate else await page.goto(url,wait_until='domcontentloaded',timeout=30000)
             except BrowserError as error:
                 if navigation_failure:return navigation_failure
                 if 'net::ERR_' in str(error):return FetchResult('network_error',reason='The website connection failed before the page loaded.')
@@ -229,10 +230,34 @@ class Fetcher:
                 if classification:return FetchResult(classification,reason='The page appears to require verification or is unavailable.')
             if not content:return FetchResult('empty',reason='No readable content was found.')
             if len(content)>MAX_TEXT:return FetchResult('too_large',reason='Choose a smaller page region with a target selector.')
-            return FetchResult('ok',content,page.url,http_status=status)
+            from .screenshots import capture_alert_images
+            images=await capture_alert_images(page,target,content,config)
+            return FetchResult('ok',content,page.url,http_status=status,alert_images=images)
         except BrowserTimeout:
             return FetchResult('timeout',reason='The page or selected content did not become ready in time.')
         finally:await context.close()
+
+    async def fetch_advanced(self,url,config):
+        from .desktop import navigate_desktop, DesktopUnavailable
+        # Only one desktop window may receive keyboard input at a time.
+        async with self.desktop_lock:
+            browser=None
+            try:
+                url=validate_url(url)
+                import sys
+                if sys.platform!='win32':raise DesktopUnavailable('Advanced search needs a Windows desktop worker.')
+                try:browser=await self.playwright.chromium.launch(headless=False,args=['--disable-quic','--disable-background-networking'])
+                except BrowserError as error:raise DesktopUnavailable('The desktop browser could not start.') from error
+                async with asyncio.timeout(100):
+                    return await self.browser_page(url,{**config,'scroll':True},browser,navigate_desktop)
+            except DesktopUnavailable:
+                # Infrastructure failures must not consume either website attempt.
+                raise
+            except UnsafeDestination as error:return FetchResult('unsafe_url',reason=str(error))
+            except asyncio.TimeoutError:return FetchResult('timeout',reason='Advanced search timed out while reading the website.')
+            except BrowserError:return FetchResult('browser_error',reason='Advanced search could not read the website.')
+            finally:
+                if browser:await browser.close()
 
     async def fetch(self,url,config,cache=None):
         try:url=validate_url(url)

@@ -105,6 +105,23 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
       const admin=(await db.query("select payload from notification_outbox where monitor_id=$1 and channel='admin_failure'",[id])).rows;
       assert.equal(admin.length,1);assert.ok(admin[0].payload.text.includes('Website health'));
     });
+    await t.test('advanced migration resets stopped runs, preserves paused runs and enforces spacing',async()=>{
+      await db.exec("update ezynotify set failure_count=5,completed=false where id=1");
+      await db.exec("insert into ezynotify(url,paused,failure_count) values('https://manual.test',true,2)");
+      await db.exec(await readFile(new URL('../supabase/migrations/202610160006_advanced_search.sql',import.meta.url),'utf8'));
+      let row=(await db.query('select * from ezynotify where id=1')).rows[0];
+      assert.equal(row.paused,false);assert.equal(row.failure_count,3);assert.ok(row.reference);
+      assert.equal((await db.query("select paused from ezynotify where url='https://manual.test'")).rows[0].paused,true);
+      const claimed=(await db.query("select * from claim_monitors('advanced',20,'1')")).rows[0];
+      assert.ok(claimed);
+      const update={failure_count:4,last_status:'timeout',next_check_at:new Date().toISOString()};
+      await db.query("select finish_monitor('1','advanced',$1,$2::jsonb,null,'[]')",[claimed.row_version,JSON.stringify(update)]);
+      row=(await db.query('select extract(epoch from next_check_at-now()) seconds from ezynotify where id=1')).rows[0];
+      assert.ok(Number(row.seconds)>=43199);
+      assert.equal((await db.query("select request_monitor_check('1','123') status")).rows[0].status,'advanced_wait');
+      await db.exec('update ezynotify set next_check_at=now() where id=1');
+      assert.equal((await db.query("select * from claim_monitors('too-early',20,'1')")).rows.length,0);
+    });
     await t.test('public API roles cannot execute privileged worker functions',async()=>{
       await db.exec('set role anon');
       await assert.rejects(db.query("select claim_monitors('attacker',20,null)"));

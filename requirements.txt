@@ -2,5 +2,6 @@ aiohttp>=3.13.5,<4
 beautifulsoup4>=4.13,<5
 defusedxml>=0.7.1,<1
 playwright==1.58.0
+pywinauto==0.6.9; sys_platform == 'win32'
 python-dotenv>=1.0,<2
 tzdata>=2025.2

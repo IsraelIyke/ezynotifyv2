@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from datetime import timedelta
 import json
 import logging
@@ -9,6 +10,7 @@ import uuid
 import aiohttp
 from .ai import Groq
 from .fetcher import Fetcher
+from .desktop import DesktopUnavailable
 from .models import FetchResult,fetch_key,utcnow
 from .processor import process
 from .store import Store
@@ -31,6 +33,7 @@ async def deliver_notifications(store,session,owner):
             token=os.getenv('BOT_TOKEN')
             if not token:raise RuntimeError('Alert bot token is not configured')
             payload={**item['payload'],'chat_id':item['chat_id']}
+            photo=payload.pop('_photo',None)
             payload.pop('_auto_paused',None)
             checked_at=payload.pop('_checked_at',item.get('created_at'))
             if checked_at:
@@ -46,7 +49,15 @@ async def deliver_notifications(store,session,owner):
                 updates=item['channel']=='updates' or (item['channel']=='main' and monitor[0].get('checkUpdates'))
                 payload['text']=('<b>🌐 WEBSITE HEALTH</b>' if item['channel']=='health' else '<b>🔄 PAGE UPDATES</b>' if updates else '<b>🔎 KEYWORD WATCH</b>')+'\n'+payload.get('text','')
             payload['text']=payload.get('text','').replace('\u2014','-')
-            async with session.post(f'https://api.telegram.org/bot{token}/sendMessage',json=payload,timeout=aiohttp.ClientTimeout(total=15)) as response:
+            if photo:
+                form=aiohttp.FormData()
+                form.add_field('chat_id',str(item['chat_id']))
+                form.add_field('caption',payload['text'])
+                form.add_field('parse_mode','HTML')
+                form.add_field('photo',base64.b64decode(photo,validate=True),filename='match.jpg',content_type='image/jpeg')
+                request=session.post(f'https://api.telegram.org/bot{token}/sendPhoto',data=form,timeout=aiohttp.ClientTimeout(total=30))
+            else:request=session.post(f'https://api.telegram.org/bot{token}/sendMessage',json=payload,timeout=aiohttp.ClientTimeout(total=15))
+            async with request as response:
                 result=await response.json()
                 if response.status==429:
                     raise RetryDelivery(int(result.get('parameters',{}).get('retry_after',60)))
@@ -83,14 +94,19 @@ async def run():
             groups={}
             for row in rows:
                 config=row.get('fetch_config') or {'mode':'browser'}
-                key=fetch_key(row.get('url') or '',config)
+                advanced=config.get('mode')!='health' and 3<=int(row.get('failure_count') or 0)<5
+                key=fetch_key(row.get('url') or '',{**config,'_advanced':advanced,**({'_monitor_id':str(row['id'])} if config.get('screenshot') else {})})
                 groups.setdefault(key,[]).append(row)
             ai=Groq(session)
             async with Fetcher(ai=ai,concurrency=min(5,max(1,int(os.getenv('BROWSER_CONCURRENCY','3'))))) as fetcher:
                 async def group(key,monitors):
                     nonlocal errors
                     try:
-                        row=monitors[0];cached=await store.cache(key)
+                        row=monitors[0]
+                        advanced=(row.get('fetch_config') or {}).get('mode')!='health' and 3<=int(row.get('failure_count') or 0)<5
+                        config=row.get('fetch_config') or {}
+                        if config.get('screenshot'):config={**config,'mode':'browser','_monitor':row}
+                        cached=None if advanced or config.get('screenshot') else await store.cache(key)
                         # Cross-job cache avoids duplicate manual checks; no stale
                         # browser snapshot is treated as a fresh successful fetch.
                         fresh=False
@@ -100,8 +116,18 @@ async def run():
                         try:domain=urlsplit(row.get('url') or '').hostname
                         except ValueError:domain=None
                         cooldown=await store.domain_cooldown(domain)
+                        if advanced and cooldown:return
                         if cooldown:result=FetchResult('rate_limited',reason='This website requested a pause between checks.',retry_after=cooldown)
-                        else:result=FetchResult(**cached['result']) if fresh else await fetcher.fetch(row.get('url') or '',row.get('fetch_config') or {},cached['result'] if cached else None)
+                        elif advanced:
+                            try:result=await fetcher.fetch_advanced(row.get('url') or '',config)
+                            except DesktopUnavailable:
+                                errors+=1
+                                logger.error('Advanced search desktop unavailable; attempts preserved, retrying in one hour.')
+                                for monitor in monitors:
+                                    await store.request('ezynotify?'+urlencode({'id':'eq.'+str(monitor['id']),'lease_owner':'eq.'+owner,'row_version':'eq.'+str(monitor['row_version'])}),
+                                        'PATCH',{'next_check_at':(utcnow()+timedelta(hours=1)).isoformat(),'lease_owner':None,'lease_until':None})
+                                return
+                        else:result=FetchResult(**cached['result']) if fresh else await fetcher.fetch(row.get('url') or '',config,cached['result'] if cached else None)
                         if result.status=='rate_limited':await store.set_domain_cooldown(domain,result.retry_after)
                         if result.status=='internal_error':errors+=1
                         if result.status=='ok' and not fresh:await store.set_cache(key,result)

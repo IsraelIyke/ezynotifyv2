@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime,timezone
+from datetime import datetime,timezone,timedelta
 import socket
 import unittest
 from unittest.mock import AsyncMock,patch
@@ -51,6 +51,21 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
     async def test_success_resets_failure_streak(self):
         patch,_,_=await process({**self.row,'failure_count':4},FetchResult('ok',text='Old content.'),self.ai)
         self.assertEqual(patch['failure_count'],0);self.assertNotIn('paused',patch)
+
+    async def test_advanced_stage_starts_after_three_and_waits_twelve_hours(self):
+        now=datetime(2026,10,16,tzinfo=timezone.utc)
+        row={**self.row,'failure_count':2,'failure_notified':True,'interval_minutes':1440}
+        update,event,alerts=await process(row,FetchResult('timeout',reason='Unavailable'),self.ai,now)
+        self.assertEqual(update['next_check_at'],now.isoformat())
+        self.assertTrue(event['details']['advanced_pending'])
+        self.assertIn('Advanced search',alerts[0]['payload']['text'])
+        row.update(update)
+        update,event,_=await process(row,FetchResult('timeout',reason='Unavailable'),self.ai,now)
+        self.assertEqual(update['next_check_at'],(now+timedelta(hours=12)).isoformat())
+        self.assertEqual(event['details']['search_stage'],'advanced')
+        self.assertNotIn('reference',update)
+        update,_,_=await process(row,FetchResult('rate_limited',retry_after=86400),self.ai,now)
+        self.assertEqual(update['next_check_at'],(now+timedelta(days=1)).isoformat())
 
     async def test_baseline_does_not_alert_or_invoke_ai(self):
         row={**self.row,'reference':''}
