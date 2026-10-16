@@ -10,6 +10,18 @@ test('privacy command and request buttons are reachable',async()=>{
   await f.click('privacy:deletion');assert.ok(f.calls.some(([name,args])=>name==='request_bot_privacy'&&args.p_chat==='123'&&args.p_kind==='deletion'));
 });
 
+test('health monitor creation skips keywords and AI settings and survives edits',async()=>{
+  const f=fixture();await f.send('/new');
+  assert.ok(f.messages.at(-1).body.reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='new:health'));
+  await f.click('new:health');await f.send('https://example.com');await f.send('My website');
+  const d=f.sessions.get('123').draft;assert.equal(d.step,'interval');
+  await f.click(`draft:${d.nonce}:interval-10`);assert.equal(f.sessions.get('123').draft.step,'review');
+  await f.click(`draft:${d.nonce}:confirm`);
+  const m=f.monitors.get('1');assert.equal(m.fetch_config.mode,'health');assert.equal(m.keywords,null);
+  await f.click('edit:1');assert.equal(f.sessions.get('123').draft.fetch_config.mode,'health');
+  assert.ok(!f.messages.at(-1).body.reply_markup.inline_keyboard.flat().some(b=>/advanced|keywords|repeat/.test(b.callback_data)));
+});
+
 function fixture() {
   const sessions=new Map(), monitors=new Map(), preferences=new Map(), calls=[], messages=[];
   let clock=new Date('2026-10-16T12:00:00Z');

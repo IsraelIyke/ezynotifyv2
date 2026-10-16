@@ -29,6 +29,14 @@ class Store:
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_health_notifications_use_main_bot_and_keep_only_the_health_label(self):
+        store=Store(['health']);session=Session()
+        store.items[0]['payload']['text']='<b>🌐 WEBSITE HEALTH</b>\nWebsite unavailable'
+        with patch.dict(os.environ,{'BOT_TOKEN':'main-offline-token'}):await deliver_notifications(store,session,'offline-owner')
+        self.assertIn('main-offline-token',session.urls[0])
+        self.assertTrue(session.payloads[0]['text'].startswith('<b>🌐 WEBSITE HEALTH</b>'))
+        self.assertNotIn('KEYWORD WATCH',session.payloads[0]['text'])
+
     async def test_auto_pause_notice_is_delivered_while_other_paused_alerts_are_cancelled(self):
         store=Store(['updates','updates']);session=Session()
         store.items[0]['payload']['_auto_paused']=True

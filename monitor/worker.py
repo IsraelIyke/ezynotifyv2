@@ -42,9 +42,9 @@ async def deliver_notifications(store,session,owner):
                 if local:
                     import html
                     payload['text']=payload.get('text','')+'\n\n🕒 '+html.escape(local)
-            if not payload.get('text','').startswith(('<b>🔎 KEYWORD WATCH</b>','<b>🔄 PAGE UPDATES</b>')):
+            if not payload.get('text','').startswith(('<b>🔎 KEYWORD WATCH</b>','<b>🔄 PAGE UPDATES</b>','<b>🌐 WEBSITE HEALTH</b>')):
                 updates=item['channel']=='updates' or (item['channel']=='main' and monitor[0].get('checkUpdates'))
-                payload['text']=('<b>🔄 PAGE UPDATES</b>' if updates else '<b>🔎 KEYWORD WATCH</b>')+'\n'+payload.get('text','')
+                payload['text']=('<b>🌐 WEBSITE HEALTH</b>' if item['channel']=='health' else '<b>🔄 PAGE UPDATES</b>' if updates else '<b>🔎 KEYWORD WATCH</b>')+'\n'+payload.get('text','')
             payload['text']=payload.get('text','').replace('\u2014','-')
             async with session.post(f'https://api.telegram.org/bot{token}/sendMessage',json=payload,timeout=aiohttp.ClientTimeout(total=15)) as response:
                 result=await response.json()

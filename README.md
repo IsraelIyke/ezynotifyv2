@@ -2,7 +2,7 @@
 
 **Your websites. Your updates. Less checking.**
 
-Watch public pages for changes or keywords and receive clear Telegram alerts with AI summaries. This repository unifies the former `ezynotify-bot` webhook and `ezynotifyv2` checker.
+Monitor public pages for changes, keywords or website availability and receive clear Telegram alerts. Page-change alerts include AI summaries. This repository unifies the former `ezynotify-bot` webhook and `ezynotifyv2` checker.
 
 [Open @ezynotify_bot](https://t.me/ezynotify_bot)
 
@@ -34,7 +34,7 @@ The conversation handler, AI gateway, and scheduling endpoint run in **Supabase 
 ## What the bot supports
 
 - A dashboard with blue primary buttons, green save buttons, red delete confirmations, and concise emoji-based navigation.
-- Page-change and keyword monitors with names, schedules, repeat/one-shot behavior, and alert detail preferences.
+- Page-change, keyword and Website Health monitors with names and schedules. Page-change and keyword modes also support repeat/one-shot behavior and alert detail preferences.
 - Durable, expiring drafts; nothing is created or edited until the user confirms. Cancelling an edit leaves the saved monitor intact.
 - Paginated monitor lists, pause/resume, manual checks with a two-minute cooldown, and recent activity.
 - Saved timezone preferences for local monitor times, activity and alert timestamps, including daylight saving. Durations display as minutes, hours or days.
@@ -176,7 +176,15 @@ Delivery is at least once: a Telegram send that succeeds just before a worker cr
 MIT. Both original components are by Israel Ikechukwu. See [LICENSE](LICENSE).
 ## Admin alerts and privacy
 
-Monitors pause after five consecutive failed checks. A successful check resets the failure streak. Users receive a pause notice and can review the reason under My monitors, then choose Resume to start a fresh attempt cycle. Existing monitors already at the limit are paused by the migration. Internal HTTP retries do not count as separate checks.
+### Website Health
+
+Choose **New monitor → Website health**, or send `/health`. Add a URL, name and check interval (10 minutes or longer). The main bot sends **🌐 WEBSITE HEALTH** alerts once when the monitored URL becomes unavailable and once when it recovers. A first check that is already down also alerts; a first successful check establishes availability silently.
+
+Health checks use a bounded GET request and inspect HTTP response headers, following validated public redirects without extracting content or calling AI. HTTP 2xx/3xx responses indicate availability; network/DNS/TLS failures and other HTTP errors indicate that the monitored URL is unavailable from the checker. HTTP 401, 403 and 429 are inconclusive access restrictions, with a separate notice rather than a false outage or recovery. A 200 response only establishes HTTP availability, not that all application features work or that every visitor can reach the site.
+
+Health monitors continue through outages to detect recovery and are exempt from the five-failure automatic pause. They respect rate limits and configured intervals. Detection can be delayed by scheduling and GitHub runner startup. Use Pause to stop checks manually. Updates and Keywords retain their five-failure limit.
+
+Updates and Keywords pause after five consecutive failed checks. A successful check resets the failure streak. Users receive a pause notice and can review the reason under My monitors, then choose Resume to start a fresh attempt cycle. Existing monitors already at the limit are paused by the migration. Internal HTTP retries do not count as separate checks.
 
 Every completed failed website check queues an admin alert in Supabase, including consecutive failures. Configure the recipient in the service-only `monitor_admin_settings` table and the separate bot token as the Supabase secret `ADMIN_BOT_TOKEN`. The `ezynotify-notifications` Edge Function uses this separate bot; an authenticated Supabase Cron job runs every minute. It requires that secret and does not fall back to the main bot. User keyword, change, failure and recovery notices continue through the main bot. Delivery retries are independent of user-facing failure suppression. Alerts include the hostname, monitor ID/type, reason and timestamp, excluding URL paths, queries and page content.
 

@@ -16,6 +16,7 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
     await db.exec(await readFile(new URL('../supabase/migrations/202610160002_users_and_timezones.sql',import.meta.url),'utf8'));
     await db.exec(await readFile(new URL('../supabase/migrations/202610160003_admin_failure_alerts.sql',import.meta.url),'utf8'));
     await db.exec(await readFile(new URL('../supabase/migrations/202610160004_pause_failed_monitors.sql',import.meta.url),'utf8'));
+    await db.exec(await readFile(new URL('../supabase/migrations/202610160005_website_health.sql',import.meta.url),'utf8'));
     await t.test('historical owners are backfilled without inflating active usage, and profile updates are idempotent',async()=>{
       let r=await db.query('select * from bot_usage_stats');assert.equal(r.rows[0].total_users,1);assert.equal(r.rows[0].active_last_24h,0);
       await db.query("select record_bot_user('123','{\"first_name\":\"Test\",\"username\":\"testuser\"}',12)");
@@ -91,6 +92,18 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
       await db.exec('update ezynotify set paused=false where id=1');
       const resumed=(await db.query('select failure_count,failure_notified from ezynotify where id=1')).rows[0];
       assert.equal(resumed.failure_count,0);assert.equal(resumed.failure_notified,false);
+    });
+    await t.test('health monitors remain active past five failures and retain their type when saved',async()=>{
+      await db.exec("insert into bot_sessions(chat_id,draft) values('123','{\"nonce\":\"health\",\"step\":\"review\"}')");
+      const fields={url:'https://example.com',title:'Health',checkUpdates:false,keywords:null,interval_minutes:10,shouldContinueCheck:true,shouldSendDetailedUpdates:false,fetch_config:{mode:'health'}};
+      const id=(await db.query("select commit_bot_draft('123','health',$1::jsonb,null) id",[JSON.stringify(fields)])).rows[0].id;
+      await db.query('update ezynotify set failure_count=8 where id::text=$1',[id]);
+      const m=(await db.query('select paused,fetch_config from ezynotify where id::text=$1',[id])).rows[0];
+      assert.equal(m.paused,false);assert.equal(m.fetch_config.mode,'health');
+      await db.exec('update monitor_admin_settings set enabled=true');
+      await db.query("insert into monitor_events(monitor_id,status,summary) values($1,'health_down','HTTP 503')",[id]);
+      const admin=(await db.query("select payload from notification_outbox where monitor_id=$1 and channel='admin_failure'",[id])).rows;
+      assert.equal(admin.length,1);assert.ok(admin[0].payload.text.includes('Website health'));
     });
     await t.test('public API roles cannot execute privileged worker functions',async()=>{
       await db.exec('set role anon');

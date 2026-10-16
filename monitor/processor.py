@@ -3,6 +3,7 @@ import difflib
 import html
 import json
 from .models import normalize, utcnow
+from .health import process_health
 
 
 def get_diff(old,new):
@@ -20,13 +21,14 @@ def alert(row,heading,text,channel='main'):
     title=html.escape((row.get('title') or 'Website monitor')[:60].replace('\u2014','-'))
     url=html.escape(row['url'],quote=True)
     # Escape AFTER truncating content so we never cut through an HTML entity/tag.
-    kind='🔄 PAGE UPDATES' if channel=='updates' or (channel=='main' and row.get('checkUpdates')) else '🔎 KEYWORD WATCH'
+    kind='🌐 WEBSITE HEALTH' if channel=='health' or (row.get('fetch_config') or {}).get('mode')=='health' else '🔄 PAGE UPDATES' if channel=='updates' or (channel=='main' and row.get('checkUpdates')) else '🔎 KEYWORD WATCH'
     text=text.replace('\u2014','-')
     message=f'<b>{kind}</b>\n{heading}\n<b>{title}</b>\n\n{html.escape(text[:1900])}\n\n<a href="{url}">Open website ↗</a>'
     return {'channel':channel,'payload':{'text':message,'_checked_at':utcnow().isoformat(),'parse_mode':'HTML','link_preview_options':{'is_disabled':True},'reply_markup':{'inline_keyboard':[[{'text':'📋 My monitors','callback_data':'list:0'}]]}}}
 
 
 async def process(row,result,ai,now=None):
+    if (row.get('fetch_config') or {}).get('mode')=='health':return process_health(row,result,alert,now)
     now=now or utcnow()
     interval=row.get('interval_minutes') or 10
     patch={'last_status':result.status,'last_error':None,'failure_count':0,'next_check_at':(now+timedelta(minutes=interval)).isoformat(),'isUpdated':False}

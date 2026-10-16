@@ -5,7 +5,8 @@ const q = encodeURIComponent;
 const button = (text, callback_data, style) => ({ text, callback_data, ...(style ? { style } : {}) });
 const homeButtons = () => [[button('✨ New monitor', 'new', 'primary')], [button('📋 My monitors', 'list:0'), button('💡 Help', 'help')], [button('🌍 Timezone','timezone'),button('🔐 Privacy','privacy:0')]];
 const backHome = () => [[button('🏠 Dashboard', 'home')]];
-const statusIcon = (m) => m.paused ? '⏸' : m.completed ? '🏁' : ['challenge','blocked','robots_denied'].includes(m.last_status) ? '🛡' : m.failure_count ? '⚠️' : '🟢';
+const statusIcon = (m) => m.paused ? '⏸' : m.completed ? '🏁' : m.last_status==='health_down'?'🔴':m.last_status==='health_unknown'?'🟡': ['challenge','blocked','robots_denied'].includes(m.last_status) ? '🛡' : m.failure_count ? '⚠️' : '🟢';
+const isHealth = m => m.fetch_config?.mode==='health';
 const siteName = (url) => { try { return new URL(url).hostname; } catch { return 'Website monitor'; } };
 
 export function normalizeUrl(input) {
@@ -60,14 +61,14 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
   async function dashboard(chat, mid) {
     await clear(chat);
     const zone=await timezone(chat);
-    return screen(chat, `🔔 <b>EzyNotify</b>\n<i>Your websites. Your updates. Less checking.</i>\n\nWatch a page for changes or keywords. Get clear AI summaries when something changes.\n\n🌍 Timezone: <b>${escapeHtml(zone)}</b>${zone==='UTC'?' · Select your timezone below':''}\n\nChoose where to start 👇`, homeButtons(), mid);
+    return screen(chat, `🔔 <b>EzyNotify</b>\n<i>Your websites. Your updates. Less checking.</i>\n\nWatch pages for changes, keywords or website outages. Get clear AI summaries when something changes.\n\n🌍 Timezone: <b>${escapeHtml(zone)}</b>${zone==='UTC'?' · Select your timezone below':''}\n\nChoose where to start 👇`, homeButtons(), mid);
   }
   async function list(chat,page=0,mid) {
     page = Math.max(0, Math.min(Number(page)||0,1000));
     const rows = await db.request(`ezynotify?telegramID=eq.${q(chat)}&order=created_at.desc&offset=${page*6}&limit=7`);
     if (!rows?.length) return screen(chat, '📋 <b>Your monitors</b>\n\nNo monitors here yet. Add a public page and let EzyNotify keep an eye on it.', homeButtons(), mid);
     const items = rows.slice(0,6);
-    const buttons = items.map(m => [button(`${statusIcon(m)} ${m.checkUpdates?'🔄':'🔎'} ${(m.title || siteName(m.url)).slice(0,40)}`, `view:${m.id}`)]);
+    const buttons = items.map(m => [button(`${statusIcon(m)} ${isHealth(m)?'🌐':m.checkUpdates?'🔄':'🔎'} ${(m.title || siteName(m.url)).slice(0,40)}`, `view:${m.id}`)]);
     const nav=[];
     if (page) nav.push(button('← Previous',`list:${page-1}`));
     if (rows.length>6) nav.push(button('Next →',`list:${page+1}`));
@@ -83,7 +84,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     const actions = [[button('🔄 Check now',`check:${id}`,'primary'),button(m.paused||m.completed?'▶️ Resume':'⏸ Pause',`toggle:${id}`)],
       [button('✏️ Edit',`edit:${id}`),button('🗑 Delete',`delete:${id}`,'danger')],
       [button('📜 Recent activity',`history:${id}`),button('← My monitors','list:0')]];
-    return screen(chat, `${statusIcon(m)} <b>${escapeHtml(m.title || siteName(m.url))}</b>\n${escapeHtml(m.url)}\n\n<b>Watching:</b> ${m.checkUpdates?'Content changes':'Keywords'}\n${keywords.length?`<b>Keywords:</b> ${escapeHtml(keywords.join(', '))}\n`:''}<b>Schedule:</b> Every ${formatInterval(m.interval_minutes || 10)}\n<b>Status:</b> ${escapeHtml(m.paused?'paused':m.completed?'finished':m.last_status)}\n<b>Last check:</b> ${formatTimestamp(m.last_checked_at,tz)}\n<b>Last success:</b> ${formatTimestamp(m.last_success_at,tz)}\n<b>Next check:</b> ${m.paused||m.completed?'Paused':formatTimestamp(m.next_check_at,tz)}\n<b>Source:</b> ${escapeHtml(m.fetch_config?.mode || 'browser')}${m.fetch_config?.selector?` · <code>${escapeHtml(m.fetch_config.selector)}</code>`:''}\n\n${m.paused&&m.failure_count>=5?'⏸ Paused after five consecutive failed checks. Review the reason below, then choose Resume to try again.\n\n':''}${m.last_error?`⚠️ ${escapeHtml(m.last_error.slice(0,300))}\n\n`:''}<i>Check now requests a background job; startup can take a few minutes.</i>`,actions,mid);
+    return screen(chat, `${statusIcon(m)} <b>${escapeHtml(m.title || siteName(m.url))}</b>\n${escapeHtml(m.url)}\n\n<b>Watching:</b> ${isHealth(m)?'Website health':m.checkUpdates?'Content changes':'Keywords'}\n${keywords.length?`<b>Keywords:</b> ${escapeHtml(keywords.join(', '))}\n`:''}<b>Schedule:</b> Every ${formatInterval(m.interval_minutes || 10)}\n<b>Status:</b> ${escapeHtml(m.paused?'paused':m.completed?'finished':isHealth(m)?({'ok':'online','health_down':'unavailable','health_unknown':'inconclusive'}[m.last_status]||'awaiting first check'):m.last_status)}\n<b>Last check:</b> ${formatTimestamp(m.last_checked_at,tz)}\n<b>Last success:</b> ${formatTimestamp(m.last_success_at,tz)}\n<b>Next check:</b> ${m.paused||m.completed?'Paused':formatTimestamp(m.next_check_at,tz)}\n<b>Source:</b> ${escapeHtml(m.fetch_config?.mode || 'browser')}${m.fetch_config?.selector?` · <code>${escapeHtml(m.fetch_config.selector)}</code>`:''}\n\n${m.paused&&!isHealth(m)&&m.failure_count>=5?'⏸ Paused after five consecutive failed checks. Review the reason below, then choose Resume to try again.\n\n':''}${m.last_error?`⚠️ ${escapeHtml(m.last_error.slice(0,300))}\n\n`:''}<i>Check now requests a background job; startup can take a few minutes.</i>`,actions,mid);
   }
   function draftButtons(d, rows) {
     return rows.map(row=>row.map(([text,value,style])=>button(text,`draft:${d.nonce}:${value}`,style)));
@@ -91,12 +92,16 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
   async function review(chat,d,mid) {
     d.step='review'; await save(chat,d);
     const c=d.fetch_config;
+    if(isHealth(d))return screen(chat,`🌐 <b>Review website health monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Website:</b> ${escapeHtml(d.url)}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n\n🔴 Get an alert when the URL becomes unavailable.\n🟢 Get a recovery alert when it responds again.\n🟡 Restricted access is inconclusive, not proof of an outage.\n\nChecks continue during outages. HTTP availability is measured from our checker; this does not verify every page feature. Runner delays can affect detection time.\n\n<i>Check site rules and permissions. Read /privacy before saving.</i>`,draftButtons(d,[[['💚 Save health monitor','confirm','success']],[['✖️ Discard draft','cancel']]]),mid);
     return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n\n<i>Only public pages are supported. Check robots.txt, site terms and required permissions. Read /privacy before saving. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
       draftButtons(d,[[['💚 Save monitor','confirm','success']],[['⚙️ Advanced settings','advanced']],[['✖️ Discard draft','cancel']]]),mid);
   }
   async function prompt(chat,d,mid) {
     const cancel = draftButtons(d,[[['✖️ Discard draft','cancel']]]);
     const choices = (rows) => draftButtons(d,rows).concat(cancel);
+    if(isHealth(d)&&d.step==='url')return screen(chat,'🌐 <b>Website health · 1 of 3</b>\n\nSend the public URL to check, for example <code>https://example.com</code>. We check HTTP availability, not page changes.',cancel,mid);
+    if(isHealth(d)&&d.step==='title')return screen(chat,'🏷 <b>Name this health monitor · 2 of 3</b>\n\nSend a short website name.',choices([[['Use website name','default-title']]]),mid);
+    if(isHealth(d)&&d.step==='interval')return screen(chat,'⏱ <b>Health check frequency</b>\n\nChoose how often to check. Detection follows this schedule plus runner startup time. Alerts repeat only after recovery and a new outage.',choices([[['10 minutes','interval-10'],['30 minutes','interval-30']],[['1 hour','interval-60'],['6 hours','interval-360']],[['Daily','interval-1440']]]),mid);
     switch(d.step) {
       case 'url': return screen(chat,'✨ <b>New monitor · 1 of 5</b>\n\nSend the public page URL you want to watch.\n\nExample: <code>https://example.com/news</code>',cancel,mid);
       case 'keywords': return screen(chat,'🔎 <b>Which keywords?</b>\n\nSend words or phrases separated by commas. Matches ignore capitalization.\n\nExample: <code>applications open, admission list</code>',cancel,mid);
@@ -114,20 +119,21 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       const count=await db.request(`ezynotify?telegramID=eq.${q(chat)}&select=id&limit=50`);
       if(count?.length>=50)return screen(chat,'📋 You have reached the limit of 50 monitors. Delete a monitor before adding another.',[[button('📋 My monitors','list:0')]],mid);
     }
-    const d = { step:'url',nonce:crypto.randomUUID().slice(0,8),checkUpdates:type==='updates',title:'',interval_minutes:10,shouldContinueCheck:true,shouldSendDetailedUpdates:true,keywords:{keywords:[]},fetch_config:{mode:'browser',scroll:false}, ...(existing?{
+    const d = { step:'url',nonce:crypto.randomUUID().slice(0,8),checkUpdates:type==='updates',title:'',interval_minutes:10,shouldContinueCheck:true,shouldSendDetailedUpdates:type!=='health',keywords:{keywords:[]},fetch_config:{mode:type==='health'?'health':'browser',scroll:false}, ...(existing?{
       id:String(existing.id),url:existing.url,title:existing.title||siteName(existing.url),checkUpdates:existing.checkUpdates,
       keywords:existing.keywords||{keywords:[]},interval_minutes:existing.interval_minutes,shouldContinueCheck:existing.shouldContinueCheck,
       shouldSendDetailedUpdates:existing.shouldSendDetailedUpdates,fetch_config:existing.fetch_config||{mode:'browser'},step:'review',
     }:{}) };
     await save(chat,d);
+    if(existing&&isHealth(d))return screen(chat,'✏️ <b>Edit health monitor</b>\n\nChoose a field to change:',draftButtons(d,[[['🔗 Website URL','edit-url'],['🏷 Name','edit-title']],[['⏱ Frequency','edit-interval']],[['✅ Review & save','review','success']],[['✖️ Discard draft','cancel']]]),mid);
     if(existing) return screen(chat,'✏️ <b>Edit monitor</b>\n\nChanges stay in a draft until you save. Choose a field:',draftButtons(d,[[['🔗 Page URL','edit-url'],['🏷 Name','edit-title']],[['⏱ Frequency','edit-interval'],['🔁 Repeat','edit-repeat']],[['🧠 Alert detail','edit-detail'],['⚙️ Advanced','advanced']],...(!d.checkUpdates?[[['🔎 Keywords','edit-keywords']]]:[]),[['✅ Review & save','review','success']],[['✖️ Discard draft','cancel']]]),mid);
     return prompt(chat,d,mid);
   }
   async function commit(chat,d,mid) {
     const original=d.id?await owned(chat,d.id):null;
     if(d.id&&!original) return screen(chat,'This monitor no longer exists.',backHome(),mid);
-    if(!d.url||!d.title||(!d.checkUpdates&&!d.keywords.keywords.length)) throw new Error('Incomplete draft');
-    const fields = {url:d.url,title:d.title,checkUpdates:d.checkUpdates,keywords:d.checkUpdates?null:d.keywords,interval_minutes:d.interval_minutes,
+    if(!d.url||!d.title||(!isHealth(d)&&!d.checkUpdates&&!d.keywords.keywords.length)) throw new Error('Incomplete draft');
+    const fields = {url:d.url,title:d.title,checkUpdates:d.checkUpdates,keywords:isHealth(d)||d.checkUpdates?null:d.keywords,interval_minutes:d.interval_minutes,
       shouldContinueCheck:d.shouldContinueCheck,shouldSendDetailedUpdates:d.shouldSendDetailedUpdates,fetch_config:d.fetch_config,
       completed:false,next_check_at:now().toISOString()};
     if(original && (original.url!==d.url||JSON.stringify(original.fetch_config)!==JSON.stringify(d.fetch_config))) fields.reference='';
@@ -135,11 +141,12 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     const id=await db.rpc('commit_bot_draft',{p_chat:chat,p_nonce:d.nonce,p_fields:fields,p_id:d.id||null});
     let dispatchFailed=false;
     try { await dispatch(); } catch { dispatchFailed=true; }
-    return screen(chat, `💚 <b>${d.id?'Changes saved':'Your monitor is ready'}</b>\n\n${escapeHtml(d.title)}\n${dispatchFailed?'The monitor is saved. Automatic scheduling will retry the background check.':'The first check is queued. We’ll establish a baseline before reporting page changes.'}`,[[button('👀 View monitor',`view:${id}`,'primary')],...homeButtons()],mid);
+    return screen(chat, `💚 <b>${d.id?'Changes saved':'Your monitor is ready'}</b>\n\n${escapeHtml(d.title)}\n${dispatchFailed?'The monitor is saved. Automatic scheduling will retry the background check.':'The first check is queued. Health monitors alert on outages and recovery; page-change monitors first establish a baseline.'}`,[[button('👀 View monitor',`view:${id}`,'primary')],...homeButtons()],mid);
   }
   async function draftAction(chat,nonce,action,mid) {
     const d=await session(chat);
     if(!d||d.nonce!==nonce) return screen(chat,'⌛ This draft expired or was replaced. Your saved monitors are unchanged.',homeButtons(),mid);
+    if(isHealth(d)&&!['cancel','confirm','review','default-title','edit-url','edit-title','edit-interval'].includes(action)&&!action.startsWith('interval-'))return prompt(chat,d,mid);
     if(action==='cancel') { await clear(chat); return screen(chat,'Draft discarded. Your saved monitors are unchanged.',homeButtons(),mid); }
     if(action==='confirm'&&d.step==='review') return commit(chat,d,mid);
     if(action==='review') return review(chat,d,mid);
@@ -148,7 +155,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     else if(action==='default-title'&&d.step==='title') { d.title=new URL(d.url).hostname; d.step=d.id?'review':'interval'; }
     else if(action.startsWith('interval-')&&d.step==='interval') {
       const n=Number(action.slice(9)); if(![10,30,60,360,1440].includes(n)) return;
-      d.interval_minutes=n;d.step=d.id?'review':'repeat';
+      d.interval_minutes=n;d.step=d.id||isHealth(d)?'review':'repeat';
     } else if(action.startsWith('repeat-')&&d.step==='repeat') { d.shouldContinueCheck=action==='repeat-yes';d.step=d.id?'review':'detail'; }
     else if(action.startsWith('detail-')&&d.step==='detail') { d.shouldSendDetailedUpdates=action==='detail-yes';d.step='review'; }
     else if(action.startsWith('mode-')&&d.step==='advanced') {
@@ -165,7 +172,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     if(!d) return dashboard(chat);
     if(d.step==='url') {
       try { d.url=normalizeUrl(text); } catch(error) { return screen(chat,`🔗 ${escapeHtml(error.message)}`,draftButtons(d,[[['✖️ Discard draft','cancel']]])); }
-      d.step=d.id?'review':d.checkUpdates?'title':'keywords';
+      d.step=d.id?'review':d.checkUpdates||isHealth(d)?'title':'keywords';
     } else if(d.step==='keywords') {
       const keywords=[...new Set(text.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean))];
       if(!keywords.length||keywords.length>20||keywords.some(s=>s.length>100)) return screen(chat,'Please send 1–20 keywords, each at most 100 characters, separated by commas.');
@@ -204,6 +211,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       else if(['/list_update_requests','/list_keyword_check_requests','/monitors'].includes(command))action='list:0';
       else if(command==='/new_update_monitor')return begin(chatId,'updates');
       else if(command==='/new_keyword_check')return begin(chatId,'keywords');
+      else if(command==='/health')return begin(chatId,'health');
       else if(command==='/new')action='new';
       else if(text)return textInput(chatId,text);
       else return;
@@ -221,8 +229,8 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       }
       return;
     }
-    if(action==='help')return screen(chatId,'💡 <b>Your monitoring guide</b>\n\n<b>1.</b> Add a public page.\n<b>2.</b> Choose content changes or keywords.\n<b>3.</b> Pick a schedule and save.\n\n🧠 AI summarizes detected changes. If AI is unavailable, you still get a factual change excerpt.\n🛡 A CAPTCHA or access block gets a notice, not a false content alert. The last good snapshot stays safe.\n🔎 Keywords alert on first appearance, then re-arm after disappearing.\n⏱ Check now requests a job, subject to a two-minute cooldown.\n\nUse /cancel to discard an unfinished draft. Advanced settings support CSS targets, iframe targets, scrolling, HTML, feeds and JSON.\n\n<i>Only public pages are supported. Site restrictions and runner delays can prevent a check. Five consecutive failed checks pause the monitor until you choose Resume.</i>',homeButtons(),mid);
-    if(action==='new')return screen(chatId,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> - announcements, prices, application pages.\n🔎 <b>Keywords</b> - get notified when a word or phrase appears.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],...backHome()],mid);
+    if(action==='help')return screen(chatId,'💡 <b>Your monitoring guide</b>\n\n<b>1.</b> Add a public page.\n<b>2.</b> Choose content changes or keywords.\n<b>3.</b> Pick a schedule and save.\n\n🌐 Website Health checks HTTP availability and alerts on outages and recovery. Health checks continue during an outage; access restrictions are reported as inconclusive.\n🧠 AI summarizes detected changes. If AI is unavailable, you still get a factual change excerpt.\n🛡 A CAPTCHA or access block gets a notice, not a false content alert. The last good snapshot stays safe.\n🔎 Keywords alert on first appearance, then re-arm after disappearing.\n⏱ Check now requests a job, subject to a two-minute cooldown.\n\nUse /cancel to discard an unfinished draft. Advanced settings support CSS targets, iframe targets, scrolling, HTML, feeds and JSON.\n\n<i>Only public pages are supported. Site restrictions and runner delays can prevent a check. Updates and Keywords pause after five consecutive failed checks until you choose Resume. Website Health keeps checking for recovery.</i>',homeButtons(),mid);
+    if(action==='new')return screen(chatId,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> - announcements, prices, application pages.\n🔎 <b>Keywords</b> - get notified when a word or phrase appears.\n🌐 <b>Website health</b> - outage and recovery alerts.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],[button('🌐 Website health','new:health')],...backHome()],mid);
     if(action.startsWith('new:'))return begin(chatId,action.slice(4),mid);
     if(action.startsWith('draft:')) {const [,nonce,...parts]=action.split(':');return draftAction(chatId,nonce,parts.join(':'),mid);}
     if(action.startsWith('list:'))return list(chatId,action.slice(5),mid);
@@ -230,7 +238,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     const m=await owned(chatId,id||'');
     if(!m)return screen(chatId,'That monitor is unavailable.',[[button('📋 My monitors','list:0')]],mid);
     if(verb==='view')return detail(chatId,id,mid);
-    if(verb==='edit')return begin(chatId,m.checkUpdates?'updates':'keywords',mid,m);
+    if(verb==='edit')return begin(chatId,isHealth(m)?'health':m.checkUpdates?'updates':'keywords',mid,m);
     if(verb==='toggle') {
       const resuming=m.paused||m.completed;
       await db.request(`ezynotify?id=eq.${q(id)}&telegramID=eq.${q(chatId)}`,{method:'PATCH',body:{paused:!resuming,completed:false,next_check_at:now().toISOString(),...(resuming?{failure_count:0,failure_notified:false}:{})}});

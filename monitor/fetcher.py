@@ -76,6 +76,24 @@ class Fetcher:
                 if len(body)>MAX_BYTES:raise ValueError('The page exceeds the supported download size.')
             return response.status,dict(response.headers),bytes(body)
 
+    async def health_request(self,url):
+        # Read response headers only. Large bodies and content selectors do not
+        # affect availability, and GET avoids sites that reject HEAD requests.
+        async with self.http.get(validate_url(url),headers={'User-Agent':CRAWLER+'/3.0'},allow_redirects=False) as response:
+            return response.status,dict(response.headers)
+
+    async def health_page(self,url):
+        for _ in range(6):
+            status,headers=await self.health_request(url)
+            if status in (301,302,303,307,308):
+                location=headers.get('Location') or headers.get('location')
+                if not location:return FetchResult('health_down',reason='The website returned a redirect without a destination.',http_status=status)
+                url=validate_url(urljoin(url,location));continue
+            if status in (401,403,429):return FetchResult('rate_limited' if status==429 else 'blocked',reason=f'The website returned HTTP {status}; availability cannot be confirmed because access is restricted.',http_status=status,retry_after=retry_seconds(headers.get('Retry-After') or headers.get('retry-after')))
+            if 200<=status<400:return FetchResult('ok',http_status=status,final_url=url)
+            return FetchResult('health_down',reason=f'The monitored URL returned HTTP {status}.',http_status=status)
+        return FetchResult('health_down',reason='The website redirected too many times.')
+
     async def http_page(self,url,config,cache):
         headers={'User-Agent':CRAWLER+'/3.0','Accept':'text/html,application/json,application/rss+xml,application/atom+xml;q=0.9,*/*;q=0.5'}
         if cache and cache.get('status')=='ok':
@@ -228,8 +246,8 @@ class Fetcher:
                 await asyncio.sleep(max(0,delay-(time.monotonic()-self.last_request.get(domain,0))))
                 for attempt in range(2):
                     async with asyncio.timeout(100):
-                        result=await (self.browser_page(url,config) if config.get('mode','browser')=='browser' else self.http_page(url,config,cache))
-                    if result.status not in ('timeout','http_error','network_error') or attempt:break
+                        result=await (self.health_page(url) if config.get('mode')=='health' else self.browser_page(url,config) if config.get('mode','browser')=='browser' else self.http_page(url,config,cache))
+                    if result.status not in ('timeout','http_error','network_error','health_down') or attempt:break
                     await asyncio.sleep(2)
                 if result.status=='rate_limited':self.domain_retry_until[domain]=time.monotonic()+max(result.retry_after,60)
                 return result

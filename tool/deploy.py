@@ -56,11 +56,13 @@ def configure_bot(values):
     # No profile-photo API exists in this script. Preserve existing photo.
     me=telegram_call(values,'getMe',{})
     if me.get('username','').lower()!='ezynotify_bot':raise RuntimeError('Refusing to reconfigure a different Telegram bot')
-    telegram_call(values,'setMyDescription',{'description':'🔔 Your websites. Your updates. Less checking.\n\nTrack public pages for changes or keywords, get concise AI summaries, and manage everything with simple buttons.\n\n🧠 Clear change summaries\n🔎 Keyword alerts\n🛡 Honest access-block notices\n⏱ Flexible check schedules\n\nTap Start to create your first monitor.'})
+    telegram_call(values,'setMyDescription',{'description':'🔔 Your websites. Your updates. Less checking.\n\nTrack public pages for changes, keywords or outages, get concise AI summaries, and manage everything with simple buttons.\n\n🌐 Website health alerts\n🧠 Clear change summaries\n🔎 Keyword alerts\n🛡 Honest access-block notices\n⏱ Flexible check schedules\n\nTap Start to create your first monitor.'})
     telegram_call(values,'setMyShortDescription',{'short_description':'🔔 Website changes & keyword alerts, with clear AI summaries. Add a page and let EzyNotify keep watch.'})
     telegram_call(values,'setMyCommands',{'commands':[{'command':'start','description':'🔔 Open your dashboard'},{'command':'new','description':'✨ Create a website monitor'},{'command':'monitors','description':'📋 View and manage your monitors'},{'command':'timezone','description':'🌍 Set your local timezone'},{'command':'help','description':'💡 How monitoring works'},{'command':'cancel','description':'✖️ Discard the current draft'}]})
     commands=telegram_call(values,'getMyCommands',{})
     commands=[c for c in commands if c['command']!='privacy']
+    commands=[c for c in commands if c['command']!='health']
+    commands.append({'command':'health','description':'Website outage and recovery alerts'})
     commands.append({'command':'privacy','description':'Privacy and responsible use'})
     telegram_call(values,'setMyCommands',{'commands':commands})
     telegram_call(values,'setChatMenuButton',{'menu_button':{'type':'commands'}})
