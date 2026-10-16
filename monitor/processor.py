@@ -42,13 +42,18 @@ async def process(row,result,ai,now=None):
         # three chances before notifying; subsequent failures only back off.
         persistent=result.status in ('challenge','blocked','login','robots_denied','unsafe_url','unsupported','too_large')
         already_notified=bool(row.get('failure_notified'))
-        if not already_notified and (persistent or failures>=3):
+        if failures>=5:
+            patch.update(paused=True,failure_notified=True)
+            notice=alert(row,'⏸ <b>Monitor paused</b>',result.reason+' This monitor reached five consecutive failed checks. Automatic checks have stopped. Your last successful snapshot is preserved. Open My monitors, review the settings, then choose Resume to try again.',channel)
+            notice['payload']['_auto_paused']=True
+            notifications.append(notice)
+        elif not already_notified and (persistent or failures>=3):
             if result.status=='challenge':
                 message='The website requires human verification (CAPTCHA). EzyNotify could not access it. Your last successful snapshot is preserved; checks will retry less often.'
                 heading='🛡 <b>Human verification required</b>'
             else:message=result.reason+' Your last successful snapshot is preserved. We’ll retry automatically.';heading='⚠️ <b>Check unavailable</b>'
             notifications.append(alert(row,heading,message,channel));patch['failure_notified']=True
-        event={'status':result.status,'summary':result.reason,'details':{'http_status':result.http_status}}
+        event={'status':result.status,'summary':result.reason,'details':{'http_status':result.http_status,'auto_paused':failures>=5}}
         return patch,event,notifications
     patch.update(last_success_at=now.isoformat(),reference=result.text,failure_notified=False)
     if row.get('failure_notified'):

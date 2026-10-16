@@ -40,7 +40,7 @@ The conversation handler, AI gateway, and scheduling endpoint run in **Supabase 
 - Saved timezone preferences for local monitor times, activity and alert timestamps, including daylight saving. Durations display as minutes, hours or days.
 - Browser rendering with bounded readiness waits, optional scrolling, CSS region targeting, ignored regions, iframe targeting, and open shadow-root extraction.
 - HTML, RSS/Atom, text and JSON modes for sources that do not need a browser; conditional HTTP requests reuse valid ETags/Last-Modified values.
-- Shared fetches for identical URLs/configurations, short-lived caching, per-domain pacing, robots.txt checks, bounded concurrency and retry/backoff.
+- Shared fetches for identical URLs/configurations, short-lived caching, per-domain pacing, bounded concurrency and retry/backoff. The service does not fetch or enforce robots.txt; users must check website rules and permissions themselves.
 - Case-insensitive keyword appearance alerts. Repeating monitors re-arm a keyword after it disappears. One-shot monitors finish after their first match/change.
 - AI as the primary change summarizer, with labeled factual excerpts if AI is unavailable.
 - All user notifications arrive in the main bot, with distinct **🔎 KEYWORD WATCH** and **🔄 PAGE UPDATES** labels, including failure and recovery alerts. Operator failure diagnostics use a separate admin bot.
@@ -175,6 +175,8 @@ Delivery is at least once: a Telegram send that succeeds just before a worker cr
 
 MIT. Both original components are by Israel Ikechukwu. See [LICENSE](LICENSE).
 ## Admin alerts and privacy
+
+Monitors pause after five consecutive failed checks. A successful check resets the failure streak. Users receive a pause notice and can review the reason under My monitors, then choose Resume to start a fresh attempt cycle. Existing monitors already at the limit are paused by the migration. Internal HTTP retries do not count as separate checks.
 
 Every completed failed website check queues an admin alert in Supabase, including consecutive failures. Configure the recipient in the service-only `monitor_admin_settings` table and the separate bot token as the Supabase secret `ADMIN_BOT_TOKEN`. The `ezynotify-notifications` Edge Function uses this separate bot; an authenticated Supabase Cron job runs every minute. It requires that secret and does not fall back to the main bot. User keyword, change, failure and recovery notices continue through the main bot. Delivery retries are independent of user-facing failure suppression. Alerts include the hostname, monitor ID/type, reason and timestamp, excluding URL paths, queries and page content.
 

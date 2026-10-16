@@ -7,7 +7,6 @@ import json
 import re
 import time
 from urllib.parse import urlsplit, urljoin
-from urllib.robotparser import RobotFileParser
 import aiohttp
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, TimeoutError as BrowserTimeout, Error as BrowserError
@@ -53,7 +52,6 @@ class Fetcher:
         self.domain_locks=defaultdict(asyncio.Lock)
         self.last_request={}
         self.domain_retry_until={}
-        self.robots={}
         self.playwright=None
         self.browser=None
 
@@ -78,34 +76,12 @@ class Fetcher:
                 if len(body)>MAX_BYTES:raise ValueError('The page exceeds the supported download size.')
             return response.status,dict(response.headers),bytes(body)
 
-    async def allowed(self,url):
-        parsed=urlsplit(validate_url(url));origin=f'{parsed.scheme}://{parsed.netloc}'
-        if origin not in self.robots:
-            try:
-                robots_url=origin+'/robots.txt'
-                for _ in range(4):
-                    status,headers,body=await self.request(robots_url,{'User-Agent':CRAWLER+'/3.0'})
-                    if status not in (301,302,303,307,308):break
-                    location=headers.get('Location') or headers.get('location')
-                    if not location:break
-                    robots_url=validate_url(urljoin(robots_url,location))
-                if status in (404,410):self.robots[origin]=(None,2)
-                elif status!=200:raise ValueError('robots.txt could not be checked; retrying later.')
-                else:
-                    parser=RobotFileParser();parser.parse(body.decode('utf-8','replace').splitlines())
-                    self.robots[origin]=(parser,max(2,min(parser.crawl_delay(CRAWLER) or parser.crawl_delay('*') or 2,60)))
-            except (aiohttp.ClientError,asyncio.TimeoutError):raise ValueError('robots.txt could not be checked; retrying later.') from None
-        parser,delay=self.robots[origin]
-        return (not parser or parser.can_fetch(CRAWLER,url)),delay
-
     async def http_page(self,url,config,cache):
         headers={'User-Agent':CRAWLER+'/3.0','Accept':'text/html,application/json,application/rss+xml,application/atom+xml;q=0.9,*/*;q=0.5'}
         if cache and cache.get('status')=='ok':
             if cache.get('etag'):headers['If-None-Match']=cache['etag']
             if cache.get('modified'):headers['If-Modified-Since']=cache['modified']
         for _ in range(6):
-            allowed,_=await self.allowed(url)
-            if not allowed:return FetchResult('robots_denied',reason='This website disallows automated checks for this page.')
             status,response_headers,body=await self.request(url,headers)
             if status in (301,302,303,307,308):
                 location=response_headers.get('Location') or response_headers.get('location')
@@ -153,11 +129,6 @@ class Fetcher:
                 target=validate_url(request.url)
                 if request_count>120 or request.resource_type in ('media','font') or request.method not in ('GET','HEAD'):
                     await route.abort();return
-                if request.is_navigation_request():
-                    allowed,_=await self.allowed(target)
-                    if not allowed:
-                        blocked_navigation=True;navigation_failure=FetchResult('robots_denied',reason='This website disallows automated checks for this page.')
-                        await route.abort();return
                 # Fulfill ALL browser traffic through the validated resolver. No
                 # browser-side DNS, inherited cookies, or unvalidated redirects.
                 headers={k:v for k,v in (await request.all_headers()).items() if k.lower() not in ('host','connection','accept-encoding','authorization','proxy-authorization')}
@@ -172,7 +143,7 @@ class Fetcher:
                     blocked_navigation=True
                     if isinstance(error,UnsafeDestination):navigation_failure=FetchResult('unsafe_url',reason='A destination resolves to a private or reserved address, or uses an unsupported URL.')
                     elif isinstance(error,ValueError):
-                        navigation_failure=FetchResult('robots_unavailable' if 'robots.txt' in str(error) else 'too_large',reason='robots.txt could not be verified; retrying later.' if 'robots.txt' in str(error) else 'The page exceeds the supported download size.')
+                        navigation_failure=FetchResult('too_large',reason='The page exceeds the supported download size.')
                     else:navigation_failure=FetchResult('network_error',reason='The page could not be reached. Its server, DNS, or TLS connection may be unavailable.')
                 await route.abort()
         await context.route('**/*',route_request)
@@ -253,13 +224,12 @@ class Fetcher:
             try:
                 remaining=int(self.domain_retry_until.get(domain,0)-time.monotonic())
                 if remaining>0:return FetchResult('rate_limited',reason='This website requested a pause between checks.',retry_after=remaining)
-                allowed,delay=await self.allowed(url)
-                if not allowed:return FetchResult('robots_denied',reason='This website disallows automated checks for this page.')
+                delay=2
                 await asyncio.sleep(max(0,delay-(time.monotonic()-self.last_request.get(domain,0))))
                 for attempt in range(2):
                     async with asyncio.timeout(100):
                         result=await (self.browser_page(url,config) if config.get('mode','browser')=='browser' else self.http_page(url,config,cache))
-                    if result.status not in ('timeout','http_error','network_error','robots_unavailable') or attempt:break
+                    if result.status not in ('timeout','http_error','network_error') or attempt:break
                     await asyncio.sleep(2)
                 if result.status=='rate_limited':self.domain_retry_until[domain]=time.monotonic()+max(result.retry_after,60)
                 return result
@@ -267,7 +237,6 @@ class Fetcher:
             except asyncio.TimeoutError:return FetchResult('timeout',reason='The website could not be reached before the timeout.')
             except aiohttp.ClientError:return FetchResult('network_error',reason='The website connection, DNS, or TLS negotiation failed.')
             except ValueError as error:
-                if 'robots.txt' in str(error):return FetchResult('robots_unavailable',reason='robots.txt could not be verified; retrying later.')
                 return FetchResult('error',reason='The page could not be read. Check the URL and advanced selectors.')
             except BrowserError as error:
                 if 'selector' in str(error).lower():return FetchResult('invalid_selector',reason='The configured CSS selector is invalid. Edit the target or ignored regions in Advanced settings.')

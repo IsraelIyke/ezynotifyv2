@@ -9,7 +9,7 @@ class FixtureFetcher(Fetcher):
 
     async def request(self,url,headers=None,method='GET',data=None):
         self.requests.append(url)
-        if url.endswith('/robots.txt'):return 200,{'Content-Type':'text/plain'},b'User-agent: *\nAllow: /\n'
+        if url.endswith('/robots.txt'):raise AssertionError('The worker must not request robots.txt')
         pages={
           '/dynamic': '<html><body><main>Loading...</main><script>setTimeout(()=>document.querySelector("main").textContent="Admissions open today",3500)</script></body></html>',
           '/framed': '<html><body><h1>Parent</h1><iframe id="news" src="https://fixture.test/frame"></iframe></body></html>',
@@ -35,6 +35,12 @@ class FixtureFetcher(Fetcher):
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):self.fetcher=await FixtureFetcher().__aenter__()
     async def asyncTearDown(self):await self.fetcher.__aexit__()
+
+    async def test_http_and_browser_checks_do_not_fetch_robots_txt(self):
+        for mode in ['html','browser']:
+            result=await self.fetcher.fetch('https://fixture.test/normal',{'mode':mode})
+            self.assertEqual(result.status,'ok')
+        self.assertFalse(any('/robots.txt' in url for url in self.fetcher.requests))
 
     async def test_waits_for_slow_dynamic_content(self):
         result=await self.fetcher.fetch('https://fixture.test/dynamic',{'mode':'browser','selector':'main'})

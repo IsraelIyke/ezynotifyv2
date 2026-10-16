@@ -4,7 +4,7 @@ export const PRIVACY_PAGES = [
 
 You choose the websites, keywords and monitoring settings. Before adding a page, you are responsible for checking its robots.txt, terms of service, copyright, licensing and applicable privacy laws, and obtaining any required permission. Check again when those rules change. A public page or permissive robots.txt does not by itself authorize every use.
 
-Use EzyNotify only for lawful, authorized monitoring. Do not submit passwords, access tokens, private links or sensitive personal information. Do not use it to bypass access controls, CAPTCHA or site restrictions. Automated robots.txt checks remain enabled, but do not replace your own checks or establish legal permission.
+Use EzyNotify only for lawful, authorized monitoring. Do not submit passwords, access tokens, private links or sensitive personal information. Do not use it to bypass access controls, CAPTCHA or site restrictions. The service does not fetch or enforce robots.txt. You must independently check it and obtain any required permission before monitoring.
 
 Third-party websites and their content are outside our control. Monitoring and AI summaries may fail, be delayed or contain errors. Verify important information against the original source. The service is provided as available, without a guarantee of uninterrupted access or accuracy.
 

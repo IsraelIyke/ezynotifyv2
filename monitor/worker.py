@@ -24,12 +24,14 @@ async def deliver_notifications(store,session,owner):
     for item in rows:
         try:
             # A deleted/paused monitor should not deliver stale queued alerts.
-            monitor=await store.request('ezynotify?'+urlencode({'id':'eq.'+item['monitor_id'],'select':'id,paused,checkUpdates'}))
-            if not monitor or monitor[0]['paused']:
+            monitor=await store.request('ezynotify?'+urlencode({'id':'eq.'+item['monitor_id'],'select':'id,paused,checkUpdates,failure_count'}))
+            pause_notice=item['payload'].get('_auto_paused') and monitor and monitor[0].get('failure_count',0)>=5
+            if not monitor or (monitor[0]['paused'] and not pause_notice) or (item['payload'].get('_auto_paused') and not pause_notice):
                 await store.request(f'notification_outbox?id=eq.{item["id"]}&lease_owner=eq.{owner}','PATCH',{'state':'cancelled','lease_owner':None,'lease_until':None});continue
             token=os.getenv('BOT_TOKEN')
             if not token:raise RuntimeError('Alert bot token is not configured')
             payload={**item['payload'],'chat_id':item['chat_id']}
+            payload.pop('_auto_paused',None)
             checked_at=payload.pop('_checked_at',item.get('created_at'))
             if checked_at:
                 chat=str(item['chat_id'])

@@ -37,6 +37,21 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.ai.summarize.assert_awaited_once();self.assertTrue(patch['completed'])
         self.assertIn('The notice changed.',alerts[0]['payload']['text']);self.assertEqual(event['details']['source'],'groq')
 
+    async def test_fifth_consecutive_failure_pauses_and_notifies_even_after_previous_notice(self):
+        row={**self.row,'failure_count':3,'failure_notified':True}
+        patch,_,alerts=await process(row,FetchResult('timeout',reason='Unavailable'),self.ai)
+        self.assertNotIn('paused',patch);self.assertEqual(alerts,[])
+        row.update(patch)
+        patch,event,alerts=await process(row,FetchResult('timeout',reason='Unavailable'),self.ai)
+        self.assertTrue(patch['paused']);self.assertEqual(patch['failure_count'],5)
+        self.assertNotIn('reference',patch);self.assertTrue(event['details']['auto_paused'])
+        self.assertEqual(len(alerts),1);self.assertTrue(alerts[0]['payload']['_auto_paused'])
+        self.assertIn('Resume',alerts[0]['payload']['text'])
+
+    async def test_success_resets_failure_streak(self):
+        patch,_,_=await process({**self.row,'failure_count':4},FetchResult('ok',text='Old content.'),self.ai)
+        self.assertEqual(patch['failure_count'],0);self.assertNotIn('paused',patch)
+
     async def test_baseline_does_not_alert_or_invoke_ai(self):
         row={**self.row,'reference':''}
         patch,event,alerts=await process(row,FetchResult('ok',text='First content'),self.ai)

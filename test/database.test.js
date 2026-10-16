@@ -15,6 +15,7 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
     await db.exec(await readFile(new URL('../supabase/migrations/202610160001_monitoring_v3.sql',import.meta.url),'utf8'));
     await db.exec(await readFile(new URL('../supabase/migrations/202610160002_users_and_timezones.sql',import.meta.url),'utf8'));
     await db.exec(await readFile(new URL('../supabase/migrations/202610160003_admin_failure_alerts.sql',import.meta.url),'utf8'));
+    await db.exec(await readFile(new URL('../supabase/migrations/202610160004_pause_failed_monitors.sql',import.meta.url),'utf8'));
     await t.test('historical owners are backfilled without inflating active usage, and profile updates are idempotent',async()=>{
       let r=await db.query('select * from bot_usage_stats');assert.equal(r.rows[0].total_users,1);assert.equal(r.rows[0].active_last_24h,0);
       await db.query("select record_bot_user('123','{\"first_name\":\"Test\",\"username\":\"testuser\"}',12)");
@@ -77,6 +78,19 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
       await db.exec('set role anon');
       await assert.rejects(db.query("select request_bot_privacy('123','access')"));
       await db.exec('reset role');
+    });
+    await t.test('fifth failure atomically pauses, prevents claims and manual resume resets the streak',async()=>{
+      await db.exec("update ezynotify set paused=false,failure_count=4,next_check_at=now() where id=1");
+      const claimed=(await db.query("select * from claim_monitors('limit-test',20,'1')")).rows[0];
+      assert.ok(claimed);
+      const patch={failure_count:5,last_status:'timeout',last_error:'Unavailable',next_check_at:new Date().toISOString()};
+      assert.equal((await db.query("select finish_monitor('1','limit-test',$1,$2::jsonb,null,'[]') saved",[claimed.row_version,JSON.stringify(patch)])).rows[0].saved,true);
+      assert.equal((await db.query('select paused from ezynotify where id=1')).rows[0].paused,true);
+      assert.equal((await db.query("select * from claim_monitors('limit-test',20,'1')")).rows.length,0);
+      assert.equal((await db.query("select request_monitor_check('1','123') status")).rows[0].status,'inactive');
+      await db.exec('update ezynotify set paused=false where id=1');
+      const resumed=(await db.query('select failure_count,failure_notified from ezynotify where id=1')).rows[0];
+      assert.equal(resumed.failure_count,0);assert.equal(resumed.failure_notified,false);
     });
     await t.test('public API roles cannot execute privileged worker functions',async()=>{
       await db.exec('set role anon');

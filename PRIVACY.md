@@ -6,7 +6,7 @@ Effective 16 October 2026. This notice applies to the EzyNotify Telegram bot and
 
 You select the websites, keywords and monitoring settings. Before adding a website, you are responsible for checking its robots.txt, terms of service, applicable copyright, licensing and privacy requirements, and obtaining any permission required for your intended use. Recheck these requirements when they change. Public accessibility and a permissive robots.txt do not by themselves authorize every use of a website or its content.
 
-Use this service only for lawful, authorized monitoring. Do not submit credentials, access tokens, private links or sensitive personal data. Do not use the service to circumvent access controls, CAPTCHA, paywalls or other restrictions. Automated robots.txt checks remain enabled, but do not replace your own assessment or provide legal clearance. The Robots Exclusion Protocol itself is not access authorization: see [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html).
+Use this service only for lawful, authorized monitoring. Do not submit credentials, access tokens, private links or sensitive personal data. Do not use the service to circumvent access controls, CAPTCHA, paywalls or other restrictions. The service does not fetch or enforce robots.txt. You must independently check it and obtain any required permission before monitoring. The Robots Exclusion Protocol itself is not access authorization: see [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html).
 
 ## Third-party websites and service limitations
 
