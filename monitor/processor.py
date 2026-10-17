@@ -69,11 +69,20 @@ async def process(row,result,ai,now=None):
     present=[k for k in words if k in result.text.casefold()]
     seen=row.get('keywords_seen') or []
     new_matches=[k for k in present if k not in seen]
+    previous_matches=row.get('keywords_matched',[item.get('keyword','').casefold() for item in (row.get('foundKeyword') or [])])
+    if not row.get('shouldContinueCheck',True):new_matches=[k for k in new_matches if k not in previous_matches]
+    matched=[k for k in words if k in previous_matches or k in present]
+    patch['keywords_matched']=matched
     patch['keywords_seen']=present
     if new_matches:
         found=(row.get('foundKeyword') or [])+[{'keyword':k,'foundAt':now.isoformat()} for k in new_matches]
         patch['foundKeyword']=found[-100:]
-        notifications.append(alert(row,'🔎 <b>Keyword match</b>','Found: '+', '.join(new_matches),'keywords'))
+        message='Found: '+', '.join(new_matches)
+        if not row.get('shouldContinueCheck',True):
+            remaining=[k for k in words if k not in matched]
+            message+=f'\nProgress: {len(matched)} of {len(words)} entries found.'
+            message+='\nStill watching for: '+', '.join(remaining) if remaining else '\nAll entries found. This monitor is now finished.'
+        notifications.append(alert(row,'🔎 <b>Keyword match</b>',message,'keywords'))
     # Legacy snapshots were lowercased. Treat a case-only difference on the first
     # upgraded check as a baseline refresh, not a flood of migration alerts.
     changed=bool(old and normalize(old).casefold()!=normalize(result.text).casefold())
@@ -95,7 +104,10 @@ async def process(row,result,ai,now=None):
         event={'status':'changed','summary':summary,'details':{'source':source,'changes':[{'added':c['added'][:2000],'removed':c['removed'][:2000]} for c in changes[:20]]}}
     elif new_matches:event={'status':'matched','summary':'Found: '+', '.join(new_matches)}
     else:event={'status':'unchanged' if old else 'baseline','summary':'No change detected.' if old else 'Initial snapshot saved.'}
-    if (new_matches or (row.get('checkUpdates') and changed)) and not row.get('shouldContinueCheck',True):patch['completed']=True
+    if not row.get('shouldContinueCheck',True):
+        if row.get('checkUpdates'):
+            if changed:patch['completed']=True
+        elif words and all(k in matched for k in words):patch['completed']=True
     if (row.get('fetch_config') or {}).get('screenshot'):
         for kind,trigger in [('keywords',bool(new_matches)),('updates',bool(row.get('checkUpdates') and changed))]:
             if not trigger:continue
@@ -103,7 +115,7 @@ async def process(row,result,ai,now=None):
             if captured:
                 title=html.escape((row.get('title') or 'Website monitor')[:60])
                 notifications.append({'channel':kind,'payload':{'text':f'<b>{title}</b>\n'+html.escape(captured['note']),
-                    '_photo':captured['image'],'_checked_at':now.isoformat(),'parse_mode':'HTML'}})
+                    '_photo':captured['image'],'_document':captured.get('document',False),'_checked_at':now.isoformat(),'parse_mode':'HTML'}})
             else:
                 for notice in notifications:
                     if notice['channel']==kind:notice['payload']['text']+='\n\nScreenshot unavailable for this result.'

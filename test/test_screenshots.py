@@ -7,6 +7,34 @@ from monitor.processor import process
 
 
 class ScreenshotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_page_highlights_every_occurrence_and_restores_page(self):
+        from monitor.screenshots import capture_alert_images
+        async with FixtureFetcher() as fetcher:
+            page=await fetcher.browser.new_page(viewport={'width':1000,'height':700})
+            await page.set_content('<body><header>Full website header</header><main><p>Scholarship and scholarship</p><p>Applications <b>open</b> today</p><div style="height:1800px">Other content</div><p>Scholarship, C++ and C++</p><p class="ignored">scholarship</p></main><footer>Full website footer</footer></body>')
+            config={'screenshot':True,'ignore':'.ignored','_monitor':{'keywords':{'keywords':['scholarship','applications open','c++']}}}
+            original=page.screenshot
+            async def screenshot(**kwargs):
+                self.assertTrue(kwargs['full_page'])
+                self.assertGreater(await page.locator('[data-ezynotify-highlight]').count(),5)
+                return await original(**kwargs)
+            page.screenshot=screenshot
+            result=await capture_alert_images(page,page.locator('main'),'scholarship applications open c++',config)
+            self.assertEqual(result['keywords']['matches'],6)
+            self.assertEqual(await page.locator('[data-ezynotify-highlight]').count(),0)
+            await page.close()
+
+    async def test_multiple_update_regions_and_tall_page_document(self):
+        from monitor.screenshots import capture_alert_images
+        async with FixtureFetcher() as fetcher:
+            page=await fetcher.browser.new_page(viewport={'width':1000,'height':700})
+            await page.set_content('<main><p>new unchanged</p><p>Alpha new Beta</p><div style="height:11000px"></div><p>Gamma added Delta</p></main>')
+            result=await capture_alert_images(page,page.locator('main'),'new unchanged Alpha new Beta Gamma added Delta',
+                {'screenshot':True,'_monitor':{'checkUpdates':True,'reference':'new unchanged Alpha Beta Gamma Delta'}})
+            self.assertEqual(result['updates']['matches'],2)
+            self.assertTrue(result['updates']['document'])
+            await page.close()
+
     async def test_normal_browser_captures_highlighted_keyword_without_desktop(self):
         row={'url':'https://fixture.test/normal','keywords':{'keywords':['welcome']},'fetch_config':{'screenshot':True}}
         async with FixtureFetcher() as fetcher:

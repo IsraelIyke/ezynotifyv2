@@ -40,6 +40,10 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     return rows?.[0]?.draft || null;
   }
   async function save(chat, draft) {
+    const previous=await session(chat);
+    if(previous?.nonce===draft.nonce && previous.step!==draft.step && !draft._goingBack)
+      draft.history=[...(previous.history||[]),previous.step].slice(-40);
+    delete draft._goingBack;
     await db.request('bot_sessions?on_conflict=chat_id', { method:'POST', prefer:'resolution=merge-duplicates', body: { chat_id:chat,draft,expires_at:new Date(now().getTime()+1800000).toISOString() } });
   }
   const clear = (chat) => db.request(`bot_sessions?chat_id=eq.${q(chat)}`, { method:'DELETE' });
@@ -87,16 +91,20 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     return screen(chat, `${statusIcon(m)} <b>${escapeHtml(m.title || siteName(m.url))}</b>\n${escapeHtml(m.url)}\n\n<b>Watching:</b> ${isHealth(m)?'Website health':m.checkUpdates?'Content changes':'Keywords'}\n${keywords.length?`<b>Keywords:</b> ${escapeHtml(keywords.join(', '))}\n`:''}<b>Schedule:</b> ${!isHealth(m)&&m.failure_count>=3&&m.failure_count<5?'Advanced search (two attempts, 12 hours apart)':'Every '+formatInterval(m.interval_minutes || 10)}\n<b>Status:</b> ${escapeHtml(m.paused?'paused':m.completed?'finished':isHealth(m)?({'ok':'online','health_down':'unavailable','health_unknown':'inconclusive'}[m.last_status]||'awaiting first check'):m.last_status)}\n<b>Last check:</b> ${formatTimestamp(m.last_checked_at,tz)}\n<b>Last success:</b> ${formatTimestamp(m.last_success_at,tz)}\n<b>Next check:</b> ${m.paused||m.completed?'Paused':formatTimestamp(m.next_check_at,tz)}\n<b>Source:</b> ${escapeHtml(m.fetch_config?.mode || 'browser')}${m.fetch_config?.selector?` · <code>${escapeHtml(m.fetch_config.selector)}</code>`:''}\n\n${m.paused&&!isHealth(m)&&m.failure_count>=5?'⏸ Paused after five consecutive failed checks. Review the reason below, then choose Resume to try again.\n\n':''}${m.last_error?`⚠️ ${escapeHtml(m.last_error.slice(0,300))}\n\n`:''}<i>Check now requests a background job; startup can take a few minutes.</i>`,actions,mid);
   }
   function draftButtons(d, rows) {
+    const cancelIndex=rows.findIndex(row=>row.some(([,value])=>value==='cancel'));
+    if(cancelIndex>=0)rows=[...rows.slice(0,cancelIndex),[['← Back','back']],...rows.slice(cancelIndex)];
     return rows.map(row=>row.map(([text,value,style])=>button(text,`draft:${d.nonce}:${value}`,style)));
   }
   async function review(chat,d,mid) {
     d.step='review'; await save(chat,d);
     const c=d.fetch_config;
     if(isHealth(d))return screen(chat,`🌐 <b>Review website health monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Website:</b> ${escapeHtml(d.url)}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n\n🔴 Get an alert when the URL becomes unavailable.\n🟢 Get a recovery alert when it responds again.\n🟡 Restricted access is inconclusive, not proof of an outage.\n\nChecks continue during outages. HTTP availability is measured from our checker; this does not verify every page feature. Runner delays can affect detection time.\n\n<i>Check site rules and permissions. Read /privacy before saving.</i>`,draftButtons(d,[[['💚 Save health monitor','confirm','success']],[['✖️ Discard draft','cancel']]]),mid);
-    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':'Finish this monitor'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n<b>Screenshots:</b> ${c.screenshot?'On (highlighted matching region)':'Off'}\n\n<i>Only public pages are supported. Check robots.txt, site terms and required permissions. Read /privacy before saving. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
+    return screen(chat, `✅ <b>Review your monitor</b>\n\n<b>Name:</b> ${escapeHtml(d.title)}\n<b>Page:</b> ${escapeHtml(d.url)}\n<b>Watch:</b> ${d.checkUpdates?'Content changes':escapeHtml(d.keywords.keywords.join(', '))}\n<b>Frequency:</b> Every ${formatInterval(d.interval_minutes)}\n<b>After an alert:</b> ${d.shouldContinueCheck?'Keep watching':d.checkUpdates?'Finish after first change':'Finish after all keywords / phrases are found'}\n<b>Alerts:</b> ${d.shouldSendDetailedUpdates?'AI summary + change excerpts':'AI summary'}\n<b>Source:</b> ${escapeHtml(c.mode)}\n<b>Target:</b> ${escapeHtml(c.selector || 'Whole page')}\n<b>Scroll:</b> ${c.scroll?'Enabled':'Off'}\n<b>Screenshots:</b> ${c.screenshot?'On (full page, all matches highlighted)':'Off'}\n\n<i>Only public pages are supported. Check robots.txt, site terms and required permissions. Read /privacy before saving. Challenge pages are reported without replacing your saved content. Change alerts include an AI summary of the detected text.</i>`,
       draftButtons(d,[[['💚 Save monitor','confirm','success']],[[`${c.screenshot?'✅':'⬜'} Screenshots`,'screenshot']],[['⚙️ Advanced settings','advanced']],[['✖️ Discard draft','cancel']]]),mid);
   }
   async function prompt(chat,d,mid) {
+    if(d.step==='edit'&&isHealth(d))return screen(chat,'✏️ <b>Edit health monitor</b>\n\nChoose a field to change:',draftButtons(d,[[['🔗 Website URL','edit-url'],['🏷 Name','edit-title']],[['⏱ Frequency','edit-interval']],[['✅ Review & save','review','success']],[['✖️ Discard draft','cancel']]]),mid);
+    if(d.step==='edit') return screen(chat,'✏️ <b>Edit monitor</b>\n\nChanges stay in a draft until you save. Choose a field:',draftButtons(d,[[['🔗 Page URL','edit-url'],['🏷 Name','edit-title']],[['⏱ Frequency','edit-interval'],['🔁 Repeat','edit-repeat']],[['🧠 Alert detail','edit-detail'],['⚙️ Advanced','advanced']],...(!d.checkUpdates?[[['🔎 Keywords','edit-keywords']]]:[]),[['✅ Review & save','review','success']],[['✖️ Discard draft','cancel']]]),mid);
     const cancel = draftButtons(d,[[['✖️ Discard draft','cancel']]]);
     const choices = (rows) => draftButtons(d,rows).concat(cancel);
     if(isHealth(d)&&d.step==='url')return screen(chat,'🌐 <b>Website health · 1 of 3</b>\n\nSend the public URL to check, for example <code>https://example.com</code>. We check HTTP availability, not page changes.',cancel,mid);
@@ -104,16 +112,17 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     if(isHealth(d)&&d.step==='interval')return screen(chat,'⏱ <b>Health check frequency</b>\n\nChoose how often to check. Detection follows this schedule plus runner startup time. Alerts repeat only after recovery and a new outage.',choices([[['10 minutes','interval-10'],['30 minutes','interval-30']],[['1 hour','interval-60'],['6 hours','interval-360']],[['Daily','interval-1440']]]),mid);
     switch(d.step) {
       case 'url': return screen(chat,'✨ <b>New monitor · 1 of 5</b>\n\nSend the public page URL you want to watch.\n\nExample: <code>https://example.com/news</code>',cancel,mid);
-      case 'keywords': return screen(chat,'🔎 <b>Which keywords?</b>\n\nSend words or phrases separated by commas. Matches ignore capitalization.\n\nExample: <code>applications open, admission list</code>',cancel,mid);
+      case 'keywords': return screen(chat,'🔎 <b>Which keywords?</b>\n\nSend single words, phrases, or a mix, separated by commas. Matches ignore capitalization.\n\nExample: <code>scholarship, deadline, applications open, admission list</code>',cancel,mid);
       case 'title': return screen(chat,'🏷 <b>Give it a name · 2 of 5</b>\n\nSend a short name such as “University admissions”.', choices([[['Use website name','default-title']]]),mid);
       case 'interval': return screen(chat,'⏱ <b>How often? · 3 of 5</b>\n\nChoose a check interval. Jobs may start later when the runner is busy.', choices([[['10 minutes','interval-10'],['30 minutes','interval-30']],[['1 hour','interval-60'],['6 hours','interval-360']],[['Daily','interval-1440']]]),mid);
-      case 'repeat': return screen(chat,'🔁 <b>After an alert? · 4 of 5</b>\n\nKeep watching for future changes, or finish after the first result? Keyword alerts repeat only after a keyword disappears and appears again.',choices([[['Keep watching','repeat-yes','primary']],[['Finish after first result','repeat-no']]]),mid);
+      case 'repeat': return screen(chat,`🔁 <b>After an alert? · 4 of 5</b>\n\n${d.checkUpdates?'Keep watching for future changes, or finish after the first change?':'Keep watching, or stop only after every keyword and phrase has been found? Matches accumulate across checks; partial matches keep searching.'}`,choices([[['Keep watching','repeat-yes','primary']],[[d.checkUpdates?'Finish after first change':'Stop after finding all','repeat-no']]]),mid);
       case 'detail': return screen(chat,'🧠 <b>Choose your alert · 5 of 5</b>\n\nEvery change alert includes an AI summary. Include short added/removed excerpts too?',choices([[['Summary + excerpts','detail-yes','primary']],[['Summary only','detail-no']]]),mid);
-      case 'advanced': return screen(chat,'⚙️ <b>Advanced settings</b>\n\nBrowser rendering handles JavaScript. HTML is faster for static pages. Feed/API mode reads RSS, Atom, or JSON.\n\nA CSS target limits monitoring to a page section. An iframe selector selects a frame first. Ignored selectors exclude noisy elements. Scrolling is bounded to five steps. Screenshots use browser rendering and show the first matching region with a highlight when possible.', choices([[['🌐 Browser','mode-browser'],['📄 HTML','mode-html']],[['📡 Feed / API','mode-feed']],[['🎯 CSS target','set-selector'],['🧩 Iframe','set-frame']],[['🙈 Ignore regions','set-ignore'],[`${d.fetch_config.scroll?'✅':'⬜'} Scroll`,'scroll']],[[`${d.fetch_config.screenshot?'✅':'⬜'} Screenshots`,'screenshot']],[['↩️ Review','review','primary']]]),mid);
+      case 'advanced': return screen(chat,'⚙️ <b>Advanced settings</b>\n\nBrowser rendering handles JavaScript. HTML is faster for static pages. Feed/API mode reads RSS, Atom, or JSON.\n\nA CSS target limits monitoring to a page section. An iframe selector selects a frame first. Ignored selectors exclude noisy elements. Scrolling is bounded to five steps. Screenshots show the full page and highlight all located matches. Very tall pages arrive as an image file to keep them readable.', choices([[['🌐 Browser','mode-browser'],['📄 HTML','mode-html']],[['📡 Feed / API','mode-feed']],[['🎯 CSS target','set-selector'],['🧩 Iframe','set-frame']],[['🙈 Ignore regions','set-ignore'],[`${d.fetch_config.scroll?'✅':'⬜'} Scroll`,'scroll']],[[`${d.fetch_config.screenshot?'✅':'⬜'} Screenshots`,'screenshot']],[['↩️ Review','review','primary']]]),mid);
       case 'selector': case 'frame': case 'ignore': return screen(chat,`🎯 <b>${d.step==='selector'?'Target CSS selector':d.step==='frame'?'Iframe CSS selector':'Ignored CSS selectors'}</b>\n\n${d.step==='ignore'?'Send a comma-separated CSS selector list, e.g. <code>nav, footer, .timestamp</code>.':'Send one CSS selector, e.g. <code>main</code> or <code>iframe#news</code>.'}\n\nTap Clear setting or send <code>/skip</code> to clear this setting.`,choices([[['🧹 Clear setting','clear-setting']]]),mid);
       default: return review(chat,d,mid);
     }
   }
+  function newMonitorMenu(chat,mid) { return screen(chat,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> - announcements, prices, application pages.\n🔎 <b>Keywords</b> - get notified when a word or phrase appears.\n🌐 <b>Website health</b> - outage and recovery alerts.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],[button('🌐 Website health','new:health')],...backHome()],mid); }
   async function begin(chat,type,mid,existing) {
     if(!existing) {
       const count=await db.request(`ezynotify?telegramID=eq.${q(chat)}&select=id&limit=50`);
@@ -122,11 +131,9 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     const d = { step:'url',nonce:crypto.randomUUID().slice(0,8),checkUpdates:type==='updates',title:'',interval_minutes:10,shouldContinueCheck:true,shouldSendDetailedUpdates:type!=='health',keywords:{keywords:[]},fetch_config:{mode:type==='health'?'health':'browser',scroll:false}, ...(existing?{
       id:String(existing.id),url:existing.url,title:existing.title||siteName(existing.url),checkUpdates:existing.checkUpdates,
       keywords:existing.keywords||{keywords:[]},interval_minutes:existing.interval_minutes,shouldContinueCheck:existing.shouldContinueCheck,
-      shouldSendDetailedUpdates:existing.shouldSendDetailedUpdates,fetch_config:existing.fetch_config||{mode:'browser'},step:'review',
+      shouldSendDetailedUpdates:existing.shouldSendDetailedUpdates,fetch_config:existing.fetch_config||{mode:'browser'},step:'edit',
     }:{}) };
     await save(chat,d);
-    if(existing&&isHealth(d))return screen(chat,'✏️ <b>Edit health monitor</b>\n\nChoose a field to change:',draftButtons(d,[[['🔗 Website URL','edit-url'],['🏷 Name','edit-title']],[['⏱ Frequency','edit-interval']],[['✅ Review & save','review','success']],[['✖️ Discard draft','cancel']]]),mid);
-    if(existing) return screen(chat,'✏️ <b>Edit monitor</b>\n\nChanges stay in a draft until you save. Choose a field:',draftButtons(d,[[['🔗 Page URL','edit-url'],['🏷 Name','edit-title']],[['⏱ Frequency','edit-interval'],['🔁 Repeat','edit-repeat']],[['🧠 Alert detail','edit-detail'],['⚙️ Advanced','advanced']],...(!d.checkUpdates?[[['🔎 Keywords','edit-keywords']]]:[]),[['✅ Review & save','review','success']],[['✖️ Discard draft','cancel']]]),mid);
     return prompt(chat,d,mid);
   }
   async function commit(chat,d,mid) {
@@ -147,6 +154,12 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
   async function draftAction(chat,nonce,action,mid) {
     const d=await session(chat);
     if(!d||d.nonce!==nonce) return screen(chat,'⌛ This draft expired or was replaced. Your saved monitors are unchanged.',homeButtons(),mid);
+    if(action==='back') {
+      const previous=(d.history||[]).pop();
+      if(previous) { d.step=previous;d._goingBack=true;await save(chat,d);return prompt(chat,d,mid); }
+      if(d.id)return detail(chat,d.id,mid);
+      return newMonitorMenu(chat,mid);
+    }
     if(isHealth(d)&&!['cancel','confirm','review','default-title','edit-url','edit-title','edit-interval'].includes(action)&&!action.startsWith('interval-'))return prompt(chat,d,mid);
     if(action==='cancel') { await clear(chat); return screen(chat,'Draft discarded. Your saved monitors are unchanged.',homeButtons(),mid); }
     if(action==='confirm'&&d.step==='review') return commit(chat,d,mid);
@@ -178,13 +191,13 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       d.step=d.id?'review':d.checkUpdates||isHealth(d)?'title':'keywords';
     } else if(d.step==='keywords') {
       const keywords=[...new Set(text.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean))];
-      if(!keywords.length||keywords.length>20||keywords.some(s=>s.length>100)) return screen(chat,'Please send 1–20 keywords, each at most 100 characters, separated by commas.');
+      if(!keywords.length||keywords.length>20||keywords.some(s=>s.length>100)) return screen(chat,'Please send 1–20 words or phrases, each at most 100 characters, separated by commas.',draftButtons(d,[[['Discard draft','cancel']]]));
       d.keywords={keywords};d.step=d.id?'review':'title';
     } else if(d.step==='title') {
-      if(!text||text.length>60) return screen(chat,'Please use a name with 1–60 characters.');
+      if(!text||text.length>60) return screen(chat,'Please use a name with 1–60 characters.',draftButtons(d,[[['Discard draft','cancel']]]));
       d.title=text;d.step=d.id?'review':'interval';
     } else if(['selector','frame','ignore'].includes(d.step)) {
-      if(text.length>400) return screen(chat,'Please keep selectors below 400 characters.');
+      if(text.length>400) return screen(chat,'Please keep selectors below 400 characters.',draftButtons(d,[[['Clear setting','clear-setting']],[['Discard draft','cancel']]]));
       const field=d.step; d.fetch_config[field]=text==='/skip'?'':text;
       if(field==='frame'&&text!=='/skip')d.fetch_config.mode='browser';
       d.step='advanced';
@@ -233,7 +246,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
       return;
     }
     if(action==='help')return screen(chatId,'💡 <b>Your monitoring guide</b>\n\n<b>1.</b> Add a public page.\n<b>2.</b> Choose content changes or keywords.\n<b>3.</b> Pick a schedule and save.\n\n🌐 Website Health checks HTTP availability and alerts on outages and recovery. Health checks continue during an outage; access restrictions are reported as inconclusive.\n🧠 AI summarizes detected changes. If AI is unavailable, you still get a factual change excerpt.\n🛡 A CAPTCHA or access block gets a notice, not a false content alert. The last good snapshot stays safe.\n🔎 Keywords alert on first appearance, then re-arm after disappearing.\n⏱ Check now requests a job, subject to a two-minute cooldown.\n\nUse /cancel to discard an unfinished draft. Advanced settings support CSS targets, iframe targets, scrolling, HTML, feeds and JSON.\n\n<i>Only public pages are supported. Site restrictions and runner delays can prevent a check. After three failures, Updates and Keywords switch to two advanced searches 12 hours apart, then pause if both fail. Website Health keeps checking for recovery.</i>',homeButtons(),mid);
-    if(action==='new')return screen(chatId,'✨ <b>What would you like to watch?</b>\n\n🔄 <b>Page changes</b> - announcements, prices, application pages.\n🔎 <b>Keywords</b> - get notified when a word or phrase appears.\n🌐 <b>Website health</b> - outage and recovery alerts.',[[button('🔄 Page changes','new:updates','primary')],[button('🔎 Keywords','new:keywords')],[button('🌐 Website health','new:health')],...backHome()],mid);
+    if(action==='new')return newMonitorMenu(chatId,mid);
     if(action.startsWith('new:'))return begin(chatId,action.slice(4),mid);
     if(action.startsWith('draft:')) {const [,nonce,...parts]=action.split(':');return draftAction(chatId,nonce,parts.join(':'),mid);}
     if(action.startsWith('list:'))return list(chatId,action.slice(5),mid);
@@ -244,7 +257,7 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     if(verb==='edit')return begin(chatId,isHealth(m)?'health':m.checkUpdates?'updates':'keywords',mid,m);
     if(verb==='toggle') {
       const resuming=m.paused||m.completed;
-      await db.request(`ezynotify?id=eq.${q(id)}&telegramID=eq.${q(chatId)}`,{method:'PATCH',body:{paused:!resuming,completed:false,next_check_at:now().toISOString(),...(resuming?{failure_count:0,failure_notified:false}:{})}});
+      await db.request(`ezynotify?id=eq.${q(id)}&telegramID=eq.${q(chatId)}`,{method:'PATCH',body:{paused:!resuming,completed:false,next_check_at:now().toISOString(),...(resuming?{failure_count:0,failure_notified:false}:{}),...(m.completed?{keywords_matched:[],keywords_seen:[]}:{})}});
       return detail(chatId,id,mid);
     }
     if(verb==='delete')return screen(chatId,`🗑 <b>Delete ${escapeHtml(m.title||'this monitor')}?</b>\n\nThis stops future checks.`,[[button('Delete monitor',`remove:${id}`,'danger')],[button('Keep monitor',`view:${id}`)]],mid);

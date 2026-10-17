@@ -34,6 +34,7 @@ async def deliver_notifications(store,session,owner):
             if not token:raise RuntimeError('Alert bot token is not configured')
             payload={**item['payload'],'chat_id':item['chat_id']}
             photo=payload.pop('_photo',None)
+            document=payload.pop('_document',False)
             payload.pop('_auto_paused',None)
             checked_at=payload.pop('_checked_at',item.get('created_at'))
             if checked_at:
@@ -54,8 +55,9 @@ async def deliver_notifications(store,session,owner):
                 form.add_field('chat_id',str(item['chat_id']))
                 form.add_field('caption',payload['text'])
                 form.add_field('parse_mode','HTML')
-                form.add_field('photo',base64.b64decode(photo,validate=True),filename='match.jpg',content_type='image/jpeg')
-                request=session.post(f'https://api.telegram.org/bot{token}/sendPhoto',data=form,timeout=aiohttp.ClientTimeout(total=30))
+                form.add_field('document' if document else 'photo',base64.b64decode(photo,validate=True),filename='full-page.jpg',content_type='image/jpeg')
+                method='sendDocument' if document else 'sendPhoto'
+                request=session.post(f'https://api.telegram.org/bot{token}/{method}',data=form,timeout=aiohttp.ClientTimeout(total=30))
             else:request=session.post(f'https://api.telegram.org/bot{token}/sendMessage',json=payload,timeout=aiohttp.ClientTimeout(total=15))
             async with request as response:
                 result=await response.json()

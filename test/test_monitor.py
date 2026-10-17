@@ -91,6 +91,34 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
         row.update(patch);_,_,alerts=await process(row,FetchResult('rate_limited',reason='Slow down'),self.ai,now)
         self.assertEqual(len(alerts),1)
 
+    async def test_one_shot_keywords_waits_for_all_across_checks(self):
+        row={**self.row,'checkUpdates':False,'shouldContinueCheck':False,
+             'keywords':{'keywords':['applications open','scholarship']},'keywords_matched':[]}
+        update,_,alerts=await process(row,FetchResult('ok',text='Applications OPEN now'),self.ai)
+        self.assertNotIn('completed',update)
+        self.assertEqual(update['keywords_matched'],['applications open'])
+        self.assertIn('1 of 2',alerts[0]['payload']['text'])
+        row.update(update)
+        update,_,_=await process(row,FetchResult('ok',text='Nothing today'),self.ai)
+        row.update(update)
+        update,_,alerts=await process(row,FetchResult('ok',text='Applications open again'),self.ai)
+        self.assertEqual(alerts,[]);self.assertNotIn('completed',update)
+        row.update(update)
+        update,_,alerts=await process(row,FetchResult('ok',text='Scholarship announced'),self.ai)
+        self.assertTrue(update['completed']);self.assertEqual(len(update['keywords_matched']),2)
+        self.assertIn('All entries found',alerts[0]['payload']['text'])
+
+    async def test_repeating_keyword_monitor_does_not_finish_when_all_found(self):
+        row={**self.row,'checkUpdates':False,'keywords':{'keywords':['word','a phrase']}}
+        update,_,_=await process(row,FetchResult('ok',text='word and a phrase'),self.ai)
+        self.assertNotIn('completed',update)
+
+    async def test_reset_progress_does_not_reuse_old_match_history(self):
+        row={**self.row,'checkUpdates':False,'shouldContinueCheck':False,'keywords':{'keywords':['one','two']},
+             'keywords_matched':[],'foundKeyword':[{'keyword':'one'}]}
+        update,_,_=await process(row,FetchResult('ok',text='two'),self.ai)
+        self.assertNotIn('completed',update);self.assertEqual(update['keywords_matched'],['two'])
+
     async def test_groq_failure_uses_factual_fallback(self):
         ai=Groq(None,key='',model='')
         summary,source=await ai.summarize([{'removed':'old','added':'new'}])

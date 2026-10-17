@@ -68,6 +68,44 @@ function fixture() {
   return {sessions,monitors,calls,messages,send,click,restart(){bot=createBot({db,telegram,dispatch:async()=>{},now:()=>clock});},advance(ms){clock=new Date(clock.getTime()+ms);}};
 }
 
+test('Back walks keyword setup in reverse and retains entered words, phrases and settings',async()=>{
+  const f=fixture();await f.send('/new_keyword_check');
+  const nonce=f.sessions.get('123').draft.nonce;
+  const act=action=>f.click(`draft:${nonce}:${action}`);
+  await f.send('https://example.com');
+  assert.ok(f.messages.at(-1).body.text.includes('scholarship, deadline, applications open'));
+  await f.send('scholarship, applications open');await f.send('My search');
+  await act('interval-30');await act('repeat-no');await act('detail-no');
+  assert.ok(f.messages.at(-1).body.text.includes('Finish after all'));
+  for(const expected of ['detail','repeat','interval','title','keywords','url']){
+    const buttons=f.messages.at(-1).body.reply_markup.inline_keyboard.flat();
+    assert.equal(buttons.filter(b=>b.callback_data.endsWith(':back')).length,1);
+    await act('back');assert.equal(f.sessions.get('123').draft.step,expected);
+  }
+  const d=f.sessions.get('123').draft;
+  assert.equal(d.title,'My search');assert.equal(d.interval_minutes,30);
+  assert.deepEqual(d.keywords.keywords,['scholarship','applications open']);
+  await act('back');assert.ok(f.messages.at(-1).body.text.includes('What would you like to watch'));
+  assert.equal(f.monitors.size,0);
+});
+
+test('Back supports health setup, editing and nested advanced settings without saving',async()=>{
+  const f=fixture();await f.send('/health');await f.send('https://example.com');await f.send('Health');
+  let nonce=f.sessions.get('123').draft.nonce;
+  await f.click(`draft:${nonce}:interval-10`);await f.click(`draft:${nonce}:back`);
+  assert.equal(f.sessions.get('123').draft.step,'interval');
+  f.monitors.set('8',{id:8,telegramID:'123',url:'https://example.com',title:'Original',checkUpdates:true,fetch_config:{mode:'browser'}});
+  await f.click('edit:8');nonce=f.sessions.get('123').draft.nonce;
+  await f.click(`draft:${nonce}:advanced`);await f.click(`draft:${nonce}:set-selector`);
+  await f.click(`draft:${nonce}:back`);assert.equal(f.sessions.get('123').draft.step,'advanced');
+  await f.click(`draft:${nonce}:back`);assert.equal(f.sessions.get('123').draft.step,'edit');
+  await f.click(`draft:${nonce}:edit-title`);await f.send('Changed draft');
+  await f.click(`draft:${nonce}:back`);await f.click(`draft:${nonce}:back`);
+  assert.equal(f.sessions.get('123').draft.step,'edit');assert.equal(f.sessions.get('123').draft.title,'Changed draft');
+  assert.equal(f.monitors.get('8').title,'Original');
+  await f.click(`draft:${nonce}:back`);assert.ok(f.messages.at(-1).body.text.includes('Original'));
+});
+
 test('screenshots are opt-in, persist on save and are disabled by feed mode',async()=>{
   const f=fixture();
   f.monitors.set('7',{id:7,telegramID:'123',url:'https://example.com',title:'News',checkUpdates:true,reference:'Keep baseline',fetch_config:{mode:'browser'}});

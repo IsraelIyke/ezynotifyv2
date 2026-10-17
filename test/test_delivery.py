@@ -29,6 +29,15 @@ class Store:
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tall_screenshot_uses_document_upload(self):
+        import base64
+        store=Store(['updates']);session=Session()
+        store.items[0]['payload'].update(_photo=base64.b64encode(b'jpeg').decode(),_document=True)
+        with patch.dict(os.environ,{'BOT_TOKEN':'main-offline-token'}):
+            self.assertEqual(await deliver_notifications(store,session,'offline-owner'),0)
+        self.assertTrue(session.urls[0].endswith('/sendDocument'))
+        fields={field[0]['name']:field[2] for field in session.payloads[0]._fields}
+        self.assertEqual(fields['document'],b'jpeg')
     async def test_screenshot_is_uploaded_as_photo_and_remains_separate_from_text(self):
         import base64
         store=Store(['keywords']);session=Session()

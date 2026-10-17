@@ -122,6 +122,25 @@ test('legacy PostgreSQL migration, ownership, leases, atomic results and durable
       await db.exec('update ezynotify set next_check_at=now() where id=1');
       assert.equal((await db.query("select * from claim_monitors('too-early',20,'1')")).rows.length,0);
     });
+    await t.test('all-keyword completion reopens partial results and persists progress atomically',async()=>{
+      const partial=(await db.query(`insert into ezynotify(url,"telegramID",keywords,"foundKeyword",completed,"shouldContinueCheck")
+        values('https://partial.test',123,'{"keywords":["word","a phrase"]}','[{"keyword":"word"}]',true,false) returning id`)).rows[0].id;
+      const complete=(await db.query(`insert into ezynotify(url,keywords,"foundKeyword",completed,"shouldContinueCheck")
+        values('https://complete.test','{"keywords":["word","a phrase"]}','[{"keyword":"word"},{"keyword":"a phrase"}]',true,false) returning id`)).rows[0].id;
+      await db.exec(await readFile(new URL('../supabase/migrations/202610170001_keyword_completion.sql',import.meta.url),'utf8'));
+      let row=(await db.query('select * from ezynotify where id=$1',[partial])).rows[0];
+      assert.equal(row.completed,false);assert.deepEqual(row.keywords_matched,['word']);
+      assert.equal((await db.query('select completed from ezynotify where id=$1',[complete])).rows[0].completed,true);
+      await db.query('update ezynotify set completed=true where id=$1',[partial]);
+      assert.equal((await db.query('select completed from ezynotify where id=$1',[partial])).rows[0].completed,false);
+      const claim=(await db.query("select * from claim_monitors('all-keywords',20,$1)",[String(partial)])).rows[0];
+      const patch={last_status:'ok',keywords_matched:['word','a phrase'],completed:true,next_check_at:new Date().toISOString()};
+      await db.query("select finish_monitor($1,'all-keywords',$2,$3::jsonb,null,'[]')",[String(partial),claim.row_version,JSON.stringify(patch)]);
+      row=(await db.query('select * from ezynotify where id=$1',[partial])).rows[0];
+      assert.equal(row.completed,true);assert.deepEqual(row.keywords_matched,['word','a phrase']);
+      await db.query(`update ezynotify set keywords='{"keywords":["new word"]}' where id=$1`,[partial]);
+      assert.deepEqual((await db.query('select keywords_matched from ezynotify where id=$1',[partial])).rows[0].keywords_matched,[]);
+    });
     await t.test('public API roles cannot execute privileged worker functions',async()=>{
       await db.exec('set role anon');
       await assert.rejects(db.query("select claim_monitors('attacker',20,null)"));
