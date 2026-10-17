@@ -10,11 +10,25 @@ def get_diff(old,new):
     """Word spans preserve additions, replacements and trailing deletions."""
     before=normalize(old).split();after=normalize(new).split()
     # autojunk keeps pathological/repetitive pages bounded; full input is capped.
-    matcher=difflib.SequenceMatcher(None,before,after,autojunk=True)
     changes=[]
-    for tag,a,b,c,d in matcher.get_opcodes():
+    for tag,a,b,c,d in change_spans(before,after):
         if tag!='equal':changes.append({'removed':' '.join(before[a:b]),'added':' '.join(after[c:d])})
     return changes
+
+
+def change_spans(before,after):
+    """Keep full text; bound detailed diff work on very large replacements."""
+    start=0;end_before=len(before);end_after=len(after)
+    if max(end_before,end_after)>10_000:
+        while start<min(end_before,end_after) and before[start]==after[start]:start+=1
+        while end_before>start and end_after>start and before[end_before-1]==after[end_after-1]:
+            end_before-=1;end_after-=1
+    if max(end_before-start,end_after-start)>10_000:
+        # A large changed section is represented in full, rather than dropping
+        # content or allowing an unbounded word-alignment computation.
+        return [('replace' if end_before>start and end_after>start else 'delete' if end_before>start else 'insert',start,end_before,start,end_after)]
+    return [(tag,a+start,b+start,c+start,d+start) for tag,a,b,c,d in
+            difflib.SequenceMatcher(None,before[start:end_before],after[start:end_after],autojunk=True).get_opcodes()]
 
 
 def alert(row,heading,text,channel='main'):

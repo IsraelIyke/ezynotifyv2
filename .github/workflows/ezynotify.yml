@@ -1,4 +1,5 @@
 name: Run Web Monitor
+run-name: ${{ inputs.diagnose_only && format('Diagnose monitor {0}', inputs.monitor_id) || 'Run Web Monitor' }}
 on:
   workflow_dispatch:
     inputs:
@@ -6,6 +7,11 @@ on:
         description: Optional monitor ID (normally the worker drains all due checks)
         required: false
         type: string
+      diagnose_only:
+        description: Read-only fetch diagnosis (requires monitor_id; no results or alerts are saved)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -36,6 +42,7 @@ jobs:
         python -m playwright install chromium
         
     - name: Run website monitor
+      if: ${{ !inputs.diagnose_only }}
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -44,3 +51,11 @@ jobs:
         MONITOR_AI_SECRET: ${{ secrets.MONITOR_AI_SECRET }}
         MONITOR_ID: ${{ inputs.monitor_id }}
       run: python ezynotify.py
+
+    - name: Diagnose website fetch
+      if: ${{ inputs.diagnose_only }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        MONITOR_ID: ${{ inputs.monitor_id }}
+      run: python -m monitor.diagnose

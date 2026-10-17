@@ -1,7 +1,6 @@
 """Full-page success images with temporary highlights on every located match."""
 import asyncio
 import base64
-import difflib
 import uuid
 from .models import normalize
 
@@ -57,6 +56,7 @@ CLEANUP = '''(target,token) => target.ownerDocument.querySelectorAll('[data-ezyn
 
 
 async def capture_alert_images(page,target,content,config):
+    from .processor import change_spans
     if not config.get('screenshot'):return {}
     row=config.get('_monitor') or {}
     requests={}
@@ -69,7 +69,7 @@ async def capture_alert_images(page,target,content,config):
     if row.get('checkUpdates') and old and normalize(old).casefold()!=normalize(content).casefold():
         before=normalize(old).split();after=normalize(content).split()
         requests['updates']=[{'text':' '.join(after[c:d]),'before':' '.join(after[max(0,c-5):c]),'after':' '.join(after[d:d+5])}
-            for tag,a,b,c,d in difflib.SequenceMatcher(None,before,after,autojunk=True).get_opcodes() if tag!='equal' and d>c]
+            for tag,a,b,c,d in change_spans(before,after) if tag!='equal' and d>c]
     images={}
     for channel,phrases in requests.items():
         token=uuid.uuid4().hex

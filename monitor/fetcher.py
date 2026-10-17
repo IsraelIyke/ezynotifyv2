@@ -14,8 +14,15 @@ from .models import FetchResult, normalize, utcnow
 from .security import PublicResolver, validate_url, UnsafeDestination
 
 MAX_BYTES=3_000_000
-MAX_TEXT=120_000
+MAX_DOCUMENT_BYTES=20_000_000
+MAX_BROWSER_BYTES=40_000_000
+MAX_TEXT=2_000_000
 CRAWLER='EzyNotify'
+
+
+class DownloadTooLarge(ValueError):
+    def __init__(self,limit):
+        super().__init__(f'The response exceeds the {limit//1_000_000} MB download limit. Try a lighter page or a feed/API URL.')
 
 
 def challenge_signal(text,html='',headers=None):
@@ -71,10 +78,15 @@ class Fetcher:
     async def request(self,url,headers=None,method='GET',data=None):
         url=validate_url(url)
         async with self.http.request(method,url,headers=headers,data=data,allow_redirects=False) as response:
+            # HTML can contain megabytes of markup or embedded data while its
+            # readable text is small. Keep the lower limit for other assets.
+            content_type=response.headers.get('Content-Type','').split(';')[0].strip().lower()
+            document=content_type in ('text/html','application/xhtml+xml','text/plain','application/json','application/xml','text/xml','application/rss+xml','application/atom+xml')
+            limit=MAX_DOCUMENT_BYTES if document else MAX_BYTES
             body=bytearray()
             async for chunk in response.content.iter_chunked(65536):
                 body.extend(chunk)
-                if len(body)>MAX_BYTES:raise ValueError('The page exceeds the supported download size.')
+                if len(body)>limit:raise DownloadTooLarge(limit)
             return response.status,dict(response.headers),bytes(body)
 
     async def health_request(self,url):
@@ -128,7 +140,7 @@ class Fetcher:
             else:return FetchResult('unsupported',reason='Use a public HTML, text, RSS/Atom, or JSON page.')
             content=normalize(content)
             if not content:return FetchResult('empty',reason='The page has no readable content, or the target selector did not match.')
-            if len(content)>MAX_TEXT:return FetchResult('too_large',reason='Choose a smaller page region with a target selector.')
+            if len(content)>MAX_TEXT:return FetchResult('too_large',reason='This page contains over 2 million readable characters. Select a page section to monitor.')
             if self.ai and ('html' in content_type) and (len(content)<300 or any(s in content.lower() for s in ('access denied','security check','sign in to continue'))):
                 classification=await self.ai.classify(content)
                 if classification:return FetchResult(classification,reason='The page appears to require verification or is unavailable.')
@@ -139,19 +151,26 @@ class Fetcher:
         context=await (browser or self.browser).new_context(viewport={'width':1440,'height':1000},service_workers='block',accept_downloads=False)
         page=await context.new_page()
         request_count=0
+        downloaded_bytes=0
         blocked_navigation=False
         navigation_failure=None
         async def route_request(route):
-            nonlocal request_count,blocked_navigation,navigation_failure
+            nonlocal request_count,blocked_navigation,navigation_failure,downloaded_bytes
             request=route.request;request_count+=1
             try:
                 target=validate_url(request.url)
-                if request_count>120 or request.resource_type in ('media','font') or request.method not in ('GET','HEAD'):
+                if request_count>120 or downloaded_bytes>=MAX_BROWSER_BYTES or request.resource_type in ('media','font') or request.method not in ('GET','HEAD'):
                     await route.abort();return
                 # Fulfill ALL browser traffic through the validated resolver. No
                 # browser-side DNS, inherited cookies, or unvalidated redirects.
                 headers={k:v for k,v in (await request.all_headers()).items() if k.lower() not in ('host','connection','accept-encoding','authorization','proxy-authorization')}
                 status,response_headers,body=await self.request(target,headers,request.method)
+                downloaded_bytes+=len(body)
+                if downloaded_bytes>MAX_BROWSER_BYTES:
+                    if request.is_navigation_request():
+                        blocked_navigation=True
+                        navigation_failure=FetchResult('resource_limit',reason='This page exceeded the 40 MB total download limit; try a lighter page or a feed/API URL.')
+                    await route.abort();return
                 if status in (301,302,303,307,308):
                     destination=response_headers.get('Location') or response_headers.get('location')
                     if destination:validate_url(urljoin(target,destination))
@@ -161,8 +180,9 @@ class Fetcher:
                 if request.is_navigation_request():
                     blocked_navigation=True
                     if isinstance(error,UnsafeDestination):navigation_failure=FetchResult('unsafe_url',reason='A destination resolves to a private or reserved address, or uses an unsupported URL.')
-                    elif isinstance(error,ValueError):
-                        navigation_failure=FetchResult('too_large',reason='The page exceeds the supported download size.')
+                    elif isinstance(error,DownloadTooLarge):
+                        navigation_failure=FetchResult('too_large',reason=str(error))
+                    elif isinstance(error,ValueError):navigation_failure=FetchResult('error',reason='The page response could not be read.')
                     else:navigation_failure=FetchResult('network_error',reason='The page could not be reached. Its server, DNS, or TLS connection may be unavailable.')
                 await route.abort()
         await context.route('**/*',route_request)
@@ -220,6 +240,7 @@ class Fetcher:
             # Some sites display a challenge only after the initial JS bootstrap.
             body=await page.locator('body').inner_text(timeout=3000)
             if request_count>120:return FetchResult('resource_limit',reason='This page exceeded the browser request limit; use a feed/API or a simpler page.')
+            if downloaded_bytes>MAX_BROWSER_BYTES:return FetchResult('resource_limit',reason='This page exceeded the 40 MB total download limit; try a lighter page or a feed/API URL.')
             if challenge_signal(body,await page.content(),response_headers):return FetchResult('challenge',reason='The website requires human verification.')
             if await page.locator('input[type="password"]').count() and len(content)<2000:return FetchResult('login',reason='The page requires a login.')
             page_title=(await page.title()).lower()
@@ -229,7 +250,7 @@ class Fetcher:
                 classification=await self.ai.classify(body,screenshot)
                 if classification:return FetchResult(classification,reason='The page appears to require verification or is unavailable.')
             if not content:return FetchResult('empty',reason='No readable content was found.')
-            if len(content)>MAX_TEXT:return FetchResult('too_large',reason='Choose a smaller page region with a target selector.')
+            if len(content)>MAX_TEXT:return FetchResult('too_large',reason='This page contains over 2 million readable characters. Select a page section to monitor.')
             from .screenshots import capture_alert_images
             images=await capture_alert_images(page,target,content,config)
             return FetchResult('ok',content,page.url,http_status=status,alert_images=images)
@@ -279,6 +300,7 @@ class Fetcher:
             except UnsafeDestination as error:return FetchResult('unsafe_url',reason=str(error))
             except asyncio.TimeoutError:return FetchResult('timeout',reason='The website could not be reached before the timeout.')
             except aiohttp.ClientError:return FetchResult('network_error',reason='The website connection, DNS, or TLS negotiation failed.')
+            except DownloadTooLarge as error:return FetchResult('too_large',reason=str(error))
             except ValueError as error:
                 return FetchResult('error',reason='The page could not be read. Check the URL and advanced selectors.')
             except BrowserError as error:
