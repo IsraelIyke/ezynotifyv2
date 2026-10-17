@@ -41,7 +41,7 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
         buttons.push([button(r.active_erased_at?'Check for new account data…':'Delete user data…',`pv:preview:${id}`)]);
         if(r.active_erased_at)buttons.push([button('Backup/provider checklist',`pv:handling:${id}`)]);
       }
-      if(r.kind!=='deletion'||(r.active_erased_at&&r.external_review_note))buttons.push([button('Finish request — prepared reply',`pv:outcome:${id}`)]);
+      if(r.kind!=='deletion'||(r.active_erased_at&&r.external_review_note))buttons.push([button('Finish request',`pv:outcome:${id}`)]);
       buttons.push([button('More options',`pv:options:${id}`)]);
       if(!r.active_erased_at)buttons.push([button('Decline with explanation',`pv:decline:${id}`)]);
     }
@@ -143,7 +143,7 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
         [[button('Send to requester',`pv:sendexport:${id}`)],[button('← Request',`pv:view:${id}`)]],mid);
     }
     if(verb==='sendexport'){
-      const result=await action(id,'export');return view(chat,id,mid,result.error?errors[result.error]:'Export queued. One step left: tap “Finish request — prepared reply”, review the wording and confirm.');
+      const result=await action(id,'export');return view(chat,id,mid,result.error?errors[result.error]:'Export queued. One step left: tap “Finish request”, review the wording and confirm.');
     }
     if(verb==='confirm'){
       const s=await session(actor);
