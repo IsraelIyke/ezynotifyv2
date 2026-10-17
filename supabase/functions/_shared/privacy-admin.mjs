@@ -34,20 +34,22 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
     const pending=(deliveries||[]).filter(d=>d.state==='pending').length,failed=(deliveries||[]).filter(d=>d.state==='failed').length;
     const buttons=[];
     if(r.status!=='completed'){
-      buttons.push([button('Start manual review',`pv:review:${id}`),button('Reply / ask for details',`pv:reply:${id}`)]);
+      buttons.push([button('Reply / ask for details',`pv:reply:${id}`)]);
       if(r.kind==='access')buttons.push([button('Send account/settings export',`pv:export:${id}`)]);
       if(r.kind==='correction')buttons.push([button('Apply app-profile correction',`pv:correct:${id}`)]);
       if(r.kind==='deletion'){
         buttons.push([button(r.active_erased_at?'Check for new account data…':'Delete user data…',`pv:preview:${id}`)]);
-        buttons.push([button('Record backup/provider handling',`pv:retention:${id}`)]);
+        if(r.active_erased_at)buttons.push([button('Backup/provider checklist',`pv:handling:${id}`)]);
       }
-      buttons.push([button('Complete with outcome',`pv:complete:${id}`)]);
+      if(r.kind!=='deletion'||(r.active_erased_at&&r.external_review_note))buttons.push([button('Finish request — prepared reply',`pv:outcome:${id}`)]);
+      buttons.push([button('More options',`pv:options:${id}`)]);
       if(!r.active_erased_at)buttons.push([button('Decline with explanation',`pv:decline:${id}`)]);
     }
     if(failed)buttons.push([button('Retry failed responses',`pv:retry_delivery:${id}`)]);
     buttons.push(...back);
     const info=`<b>Privacy request #${html(id)}</b>\nType: ${html(r.kind)}\nAccount: <code>${html(r.chat_id)}</code>\nReceived: ${html(r.created_at)}\nState: ${html(r.status)}\nActive data erased: ${r.active_erased_at?'Yes':'No'}\nExternal handling recorded: ${r.external_review_note?'Yes':'No'}`;
-    return screen(chat,(notice?html(notice)+'\n\n':'')+info+`\nPending deliveries: ${pending} · Failed deliveries: ${failed}`+'\n\nReview is an operator decision. Completion must describe the real outcome and any retained copies.',buttons,mid);
+    const next=r.status==='completed'?'Finished. The final response is queued or delivered.':r.kind==='deletion'?(!r.active_erased_at?'Next: delete active account data. Any open access request must be finished first.':!r.external_review_note?'Next: confirm how backups and provider copies were handled.':'Next: finish using the prepared reply.'):'Next: carry out the request, then finish using the prepared reply.';
+    return screen(chat,(notice?html(notice)+'\n\n':'')+info+`\nPending deliveries: ${pending} · Failed deliveries: ${failed}`+'\n\n'+html(next),buttons,mid);
   }
   return async function handle(update){
     const callback=update.callback_query,message=callback?.message||update.message;
@@ -83,6 +85,32 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
     if(['list','closed'].includes(verb)){await clear(actor);return list(chat,id,mid,verb==='closed');}
     if(!/^\d+$/.test(id||''))return;
     if(verb==='view'){await clear(actor);return view(chat,id,mid);}
+    if(verb==='options')return screen(chat,'Optional actions. Use a custom outcome if the prepared reply does not describe what you did.',[
+      [button('Write a custom outcome',`pv:complete:${id}`)],
+      [button('Start manual review',`pv:review:${id}`)],
+      [button('← Request',`pv:view:${id}`)]],mid);
+    if(verb==='handling')return screen(chat,'<b>Backup/provider checklist</b>\n\nActive account data has been erased. Choose the statement you have verified. Telegram may retain messages already delivered; users can remove their own copies. If backups, exports or other provider copies remain, describe them and their retention dates.',[
+      [button('Verified: no other retained copies',`pv:nocopies:${id}`)],
+      [button('Copies remain / add details',`pv:retention:${id}`)],
+      [button('← Request',`pv:view:${id}`)]],mid);
+    if(['outcome','nocopies'].includes(verb)){
+      const r=await request(id);if(!r||r.status==='completed')return view(chat,id,mid,'This request is closed.');
+      let note,actionName='complete';
+      if(verb==='nocopies'){
+        if(r.kind!=='deletion'||!r.active_erased_at)return view(chat,id,mid,'Erase active account data first.');
+        actionName='retention';note='The operator verified that no additional service-controlled backups, local exports or provider copies requiring action are retained. Telegram may retain previously delivered messages, which users can remove from their own chats.';
+      }else{
+        if(r.kind==='deletion'&&(!r.active_erased_at||!r.external_review_note))return view(chat,id,mid,errors.external_review_required);
+        const performed=await db.request(`privacy_audit?request_id=eq.${q(id)}&action=eq.${r.kind==='access'?'export':'correct'}&limit=1`);
+        if(['access','correction'].includes(r.kind)&&!performed?.length)return view(chat,id,mid,r.kind==='access'?'Send the account/settings export first, then finish the request.':'Apply the requested app-profile correction first, or use a custom outcome in More options.');
+        note={access:'Your account/settings export has been prepared and queued for delivery. It contains your stored profile, timezone and monitor settings. The operator has reviewed whether additional records need to be provided separately. Contact us if you need clarification or further records.',deletion:'Your active EzyNotify account data has been erased. Backup/provider handling is described below. Previously delivered Telegram messages may remain in your chat.',correction:'The requested correction to your stored EzyNotify app details has been applied. This does not change your Telegram account profile.',other:'Your privacy request has been reviewed and the requested action has been carried out. Contact us if you need clarification or further assistance.'}[r.kind];
+      }
+      const confirmation=crypto.randomUUID();await save(actor,id,'confirm',{action:actionName,note,token:confirmation});
+      return screen(chat,`<b>${verb==='nocopies'?'Confirm backup/provider statement':'Finish request #'+html(id)}</b>\n\n${html(note)}\n\n${verb==='nocopies'?'Confirm only if you have checked this statement.':'Confirm only if this describes the actual outcome.'}`,[
+        [button(verb==='nocopies'?'Confirm statement':'Confirm & finish',`pv:confirm:${id}:${confirmation}`)],
+        [button('Edit wording',`pv:${verb==='nocopies'?'retention':'complete'}:${id}`)],
+        [button('← Request',`pv:view:${id}`)]],mid);
+    }
     if(verb==='preview'){
       await clear(actor);const result=await action(id,'preview');
       if(result.error)return view(chat,id,mid,errors[result.error]);
@@ -92,6 +120,12 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
     }
     if(verb==='erase'){
       const result=await action(id,'erase','',token);
+      if(result.error==='access_pending'){
+        const related=await db.request(`privacy_requests?chat_id=eq.${q((await request(id)).chat_id)}&kind=eq.access&status=in.(pending,in_review)&limit=1`);
+        return screen(chat,'Nothing was deleted. Finish the open access request first so the user can receive their information before it is erased.',[
+          ...(related?.length?[[button(`Finish access request #${related[0].id}`,`pv:view:${related[0].id}`)]]:[]),
+          [button('← Deletion request',`pv:view:${id}`)]],mid);
+      }
       if(result.error)return view(chat,id,mid,errors[result.error]||'Deletion did not complete.');
       return view(chat,id,mid,'Active user data erased. Review backup/provider handling before completing this request.');
     }
@@ -109,14 +143,14 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
         [[button('Send to requester',`pv:sendexport:${id}`)],[button('← Request',`pv:view:${id}`)]],mid);
     }
     if(verb==='sendexport'){
-      const result=await action(id,'export');return view(chat,id,mid,result.error?errors[result.error]:'Account/settings export queued for the requester.');
+      const result=await action(id,'export');return view(chat,id,mid,result.error?errors[result.error]:'Export queued. One step left: tap “Finish request — prepared reply”, review the wording and confirm.');
     }
     if(verb==='confirm'){
       const s=await session(actor);
       if(!s||String(s.request_id)!==id||s.action!=='confirm'||s.draft.token!==token)return view(chat,id,mid,'This confirmation expired. Start the action again.');
       const result=await action(id,s.draft.action,s.draft.note);
       if(result.error)return view(chat,id,mid,errors[result.error]||'This action could not be completed.');
-      await clear(actor);return view(chat,id,mid,'Action recorded. The user response is queued.');
+      await clear(actor);return view(chat,id,mid,s.draft.action==='retention'?'Backup/provider statement saved. Next: finish using the prepared reply.':s.draft.action==='complete'||s.draft.action==='decline'?'Request finished. The final response is queued for the user.':'Correction applied. Next: finish using the prepared reply.');
     }
     if(['reply','retention','complete','decline','correct'].includes(verb)){
       const r=await request(id);if(!r||r.status==='completed')return view(chat,id,mid,'This request is closed.');
