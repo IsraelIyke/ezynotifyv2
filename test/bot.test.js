@@ -10,6 +10,14 @@ test('privacy command and request buttons are reachable',async()=>{
   await f.click('privacy:deletion');assert.ok(f.calls.some(([name,args])=>name==='request_bot_privacy'&&args.p_chat==='123'&&args.p_kind==='deletion'));
 });
 
+test('privacy correspondence uses the authenticated chat and keeps monitor drafts intact',async()=>{
+  const f=fixture();await f.send('/new_keyword_check');const draft=structuredClone(f.sessions.get('123').draft);
+  await f.send('/privacy_note 2 Please clarify the deletion scope.');
+  const note=f.calls.find(([name])=>name==='privacy_user_note')[1];
+  assert.equal(note.p_chat,'123');assert.equal(note.p_id,'2');assert.ok(note.p_note.includes('clarify'));
+  assert.deepEqual(f.sessions.get('123').draft,draft);
+});
+
 test('health monitor creation skips keywords and AI settings and survives edits',async()=>{
   const f=fixture();await f.send('/new');
   assert.ok(f.messages.at(-1).body.reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='new:health'));

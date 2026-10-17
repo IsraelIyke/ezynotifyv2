@@ -16,7 +16,7 @@ def settings():
 
 
 def set_secrets(values):
-    names=['BOT_TOKEN','ADMIN_BOT_TOKEN','TELEGRAM_WEBHOOK_SECRET','DISPATCH_SECRET','MONITOR_AI_SECRET','GROQ_API_KEY','GROQ_MODEL','GROQ_VISION_MODEL','GROQ_REASONING_EFFORT','GROQ_VISION_REASONING_EFFORT','GITHUB_REPOSITORY','GITHUB_WORKFLOW','GITHUB_REF','GITHUB_DISPATCH_TOKEN']
+    names=['BOT_TOKEN','ADMIN_BOT_TOKEN','PRIVACY_BOT_TOKEN','PRIVACY_WEBHOOK_SECRET','TELEGRAM_WEBHOOK_SECRET','DISPATCH_SECRET','MONITOR_AI_SECRET','GROQ_API_KEY','GROQ_MODEL','GROQ_VISION_MODEL','GROQ_REASONING_EFFORT','GROQ_VISION_REASONING_EFFORT','GITHUB_REPOSITORY','GITHUB_WORKFLOW','GITHUB_REF','GITHUB_DISPATCH_TOKEN']
     secrets=[{'name':name,'value':values[name]} for name in names if name in values]
     management(f'projects/{values["PROJECT_REF"]}/secrets',secrets,method='POST')
     print('Updated Supabase secrets:',', '.join(s['name'] for s in secrets))
@@ -37,7 +37,7 @@ def set_github_secrets(values):
 def deploy_functions(values):
     env=os.environ.copy()
     env['SUPABASE_ACCESS_TOKEN']=env.get('SUPABASE_ACCESS_TOKEN') or read_env(ROOT.parent/'guru-bot'/'.env')['SUPABASE_ACCESS_TOKEN']
-    for slug in ['ezynotify-telegram','ezynotify-dispatch','ezynotify-ai','ezynotify-notifications']:
+    for slug in ['ezynotify-telegram','ezynotify-dispatch','ezynotify-ai','ezynotify-notifications','ezynotify-privacy']:
         # CLI reads only the access token from the subprocess environment.
         result=subprocess.run(['supabase.cmd','functions','deploy',slug,'--project-ref',values['PROJECT_REF'],'--use-api','--no-verify-jwt'],cwd=ROOT,env=env,capture_output=True,text=True)
         if result.returncode:raise RuntimeError(f'Function deployment failed for {slug}; no raw CLI output printed')

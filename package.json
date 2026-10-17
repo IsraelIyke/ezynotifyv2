@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check supabase/functions/_shared/bot.mjs && node --check supabase/functions/_shared/services.mjs && node --check supabase/functions/_shared/ai.mjs && node --check supabase/functions/_shared/time.mjs",
+    "check": "node --check supabase/functions/_shared/bot.mjs && node --check supabase/functions/_shared/services.mjs && node --check supabase/functions/_shared/ai.mjs && node --check supabase/functions/_shared/time.mjs && node --check supabase/functions/_shared/privacy-admin.mjs",
     "test": "node --test"
   },
   "keywords": [],

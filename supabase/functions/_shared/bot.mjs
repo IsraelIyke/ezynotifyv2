@@ -213,6 +213,12 @@ export function createBot({ db, telegram, dispatch, now = () => new Date() }) {
     if(callback) await telegram('answerCallbackQuery',{callback_query_id:callback.id});
     const text=update.message?.text?.trim();
     const command=text?.split(/\s/)[0]?.split('@')[0];
+    if(command==='/privacy_note'){
+      const match=text.match(/^\/privacy_note(?:@\w+)?\s+(\d+)\s+([\s\S]+)$/);
+      if(!match||match[2].length>2000)return screen(chatId,'Send /privacy_note REQUEST_NUMBER followed by your message (up to 2,000 characters).');
+      const saved=await db.rpc('privacy_user_note',{p_id:match[1],p_chat:chatId,p_note:match[2]});
+      return screen(chatId,saved?'Your message has been queued for the privacy operator.':'That request is closed or unavailable for this account. Open /privacy to create a new request if needed.');
+    }
     let action=callback?.data;
     if(!action) {
       if(['/start','/menu'].includes(command))action='home';

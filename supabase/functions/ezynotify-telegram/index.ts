@@ -24,7 +24,9 @@ Deno.serve(async (req: Request) => {
     }
     if(!await db.rpc('claim_bot_update',{p_id:update.update_id}))return new Response('OK');
     const from=update.callback_query?.from || update.message?.from;
-    if(chat?.type==='private' && from && !from.is_bot && String(from.id)===String(chat.id)) {
+    const command=update.message?.text?.trim().split(/\s/)[0]?.split('@')[0];
+    const privacyOnly=['/privacy','/privacy_note'].includes(command)||update.callback_query?.data?.startsWith('privacy:');
+    if(!privacyOnly && chat?.type==='private' && from && !from.is_bot && String(from.id)===String(chat.id)) {
       await db.rpc('record_bot_user',{p_chat:String(chat.id),p_profile:{username:from.username||null,first_name:from.first_name||null,last_name:from.last_name||null,language_code:from.language_code||null},p_update_id:update.update_id});
     }
     const bot=createBot({db,telegram,dispatch:()=>dispatchChecks(db,env)});

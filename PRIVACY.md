@@ -1,6 +1,6 @@
 # Privacy and responsible use
 
-Effective 16 October 2026. This notice applies to the EzyNotify Telegram bot and website monitoring service.
+Effective 17 October 2026. This notice applies to the EzyNotify Telegram bot and website monitoring service.
 
 ## Your responsibility when monitoring websites
 
@@ -29,5 +29,11 @@ The scheduled cleanup normally removes check history after 90 days, completed or
 Profiles, preferences and saved monitors remain until removed or reviewed for deletion. You can remove monitors through My monitors. Deletion of a monitor does not automatically erase all historical, profile or delivery records. Backups and records required by law or needed to resolve a dispute may persist longer.
 
 Open `/privacy` in the bot and select **Privacy request** to request access, correction, deletion or raise another privacy concern. Requests are saved in Supabase for manual operator review. Submitting a request does not immediately erase information. The operator may contact you through the bot for clarification or identity verification and must handle requests under applicable law. The operator should regularly review the `privacy_requests` table and record progress there.
+
+Privacy requests are routed to the operator's restricted Keywords Admin bot. Review is a manual step, not an automated legal or identity assessment. Only the configured operator can use request controls. Deletion requires a preview and an explicit confirmation. It erases the account's active profile, preferences, drafts, monitors, saved snapshots, history and notification records and clears the shared fetch cache. Existing Telegram messages, private deployment backups, local exports and copies held by providers require separate assessment and handling. A request is not marked complete merely because active data was erased: the operator must record external-copy handling and communicate the actual outcome and any justified retention.
+
+The operator can provide an account/settings export and apply limited stored-profile/preferences corrections. The account/settings export does not include historical page snapshots, screenshots or check/delivery records; these require separate review when relevant to an access request. Privacy replies can be sent with `/privacy_note REQUEST_NUMBER MESSAGE` without creating a new app profile. Ordinary use of the monitoring service after erasure may create new account records.
+
+Closed privacy requests and a minimal, restricted action record are retained for up to 90 days as the service's accountability policy, not as a claim that every jurisdiction requires that period. After completed active erasure, the request's account identifier is replaced by a random reference. The recipient and content of the final erasure receipt remain only as needed for delivery/retry and are cleared after successful delivery. Sent/failed privacy-delivery records are normally removed after 30 days; pending deliveries remain while retrying. The final response identifies any separately retained categories and the applicable handling or expiry, rather than promising that no copy remains anywhere.
 
 Access to operational tables is restricted to the service role. Security controls reduce risk but cannot guarantee absolute security. Material policy changes will be reflected in the bot notice and this document. Applicable data protection and consumer rights remain unaffected, including where relevant the [Nigeria Data Protection Act](https://www.ndpc.gov.ng/ndp-act-2023/) and [Federal Competition and Consumer Protection Act](https://fccpc.gov.ng/wp-content/uploads/2022/07/FCCPA-2018.pdf).

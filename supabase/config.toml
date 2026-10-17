@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.ezynotify-notifications]
 verify_jwt = false
+
+[functions.ezynotify-privacy]
+verify_jwt = false
