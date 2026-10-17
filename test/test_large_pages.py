@@ -1,6 +1,9 @@
 import unittest
+import ssl
+from types import SimpleNamespace
 from unittest.mock import AsyncMock,patch
-from monitor.fetcher import Fetcher,DownloadTooLarge,MAX_DOCUMENT_BYTES
+import aiohttp
+from monitor.fetcher import Fetcher,DownloadTooLarge,MAX_DOCUMENT_BYTES,tls_context
 from monitor.processor import process,get_diff
 
 
@@ -24,6 +27,21 @@ class Session:
 
 
 class LargePageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_tls_context_keeps_certificate_and_hostname_checks(self):
+        context=tls_context()
+        self.assertEqual(context.verify_mode,ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+
+    async def test_certificate_failure_is_network_error_in_browser_and_http(self):
+        class InvalidCertificate(Fetcher):
+            async def request(self,*args,**kwargs):
+                raise aiohttp.ClientConnectorCertificateError(SimpleNamespace(host='fixture.test',port=443,is_ssl=True),ssl.CertificateError('Untrusted certificate'))
+        async with InvalidCertificate() as fetcher:
+            for mode in ['html','browser']:
+                result=await fetcher.fetch('https://fixture.test',{'mode':mode})
+                self.assertEqual(result.status,'network_error')
+                self.assertIn('certificate',result.reason)
+
     async def test_document_limit_accepts_large_markup_but_keeps_assets_bounded(self):
         fetcher=Fetcher()
         fetcher.http=Session(Response(3_200_000,'text/html; charset=utf-8'))
@@ -61,6 +79,14 @@ class LargePageTests(unittest.IsolatedAsyncioTestCase):
         fetcher=Fetcher();fetcher.request=AsyncMock(side_effect=DownloadTooLarge(MAX_DOCUMENT_BYTES))
         result=await fetcher.fetch('https://fixture.test',{'mode':'html'})
         self.assertEqual(result.status,'too_large');self.assertIn('20 MB',result.reason)
+
+    async def test_unrelated_response_error_is_not_misreported_as_size_limit(self):
+        class InvalidResponse(Fetcher):
+            async def request(self,*args,**kwargs):raise ValueError('Response parsing failed')
+        async with InvalidResponse() as fetcher:
+            result=await fetcher.fetch('https://fixture.test',{'mode':'browser'})
+        self.assertEqual(result.status,'error')
+        self.assertNotIn('size',result.reason)
 
 
 class LargeDiffTests(unittest.TestCase):

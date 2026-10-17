@@ -5,6 +5,8 @@ from collections import defaultdict
 from email.utils import parsedate_to_datetime
 import json
 import re
+import ssl
+import sys
 import time
 from urllib.parse import urlsplit, urljoin
 import aiohttp
@@ -23,6 +25,15 @@ CRAWLER='EzyNotify'
 class DownloadTooLarge(ValueError):
     def __init__(self,limit):
         super().__init__(f'The response exceeds the {limit//1_000_000} MB download limit. Try a lighter page or a feed/API URL.')
+
+
+def tls_context():
+    if sys.platform=='win32':
+        # Native chain validation can retrieve missing intermediate certificates,
+        # while still requiring a trusted issuer and matching hostname.
+        import truststore
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    return ssl.create_default_context()
 
 
 def challenge_signal(text,html='',headers=None):
@@ -64,7 +75,7 @@ class Fetcher:
         self.desktop_lock=asyncio.Lock()
 
     async def __aenter__(self):
-        self.http=aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=PublicResolver(),use_dns_cache=False,limit=12),
+        self.http=aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=PublicResolver(),use_dns_cache=False,limit=12,ssl=tls_context()),
             timeout=aiohttp.ClientTimeout(total=20,connect=8),trust_env=False)
         self.playwright=await async_playwright().start()
         self.browser=await self.playwright.chromium.launch(headless=True,args=['--disable-quic','--disable-background-networking'])
@@ -182,6 +193,10 @@ class Fetcher:
                     if isinstance(error,UnsafeDestination):navigation_failure=FetchResult('unsafe_url',reason='A destination resolves to a private or reserved address, or uses an unsupported URL.')
                     elif isinstance(error,DownloadTooLarge):
                         navigation_failure=FetchResult('too_large',reason=str(error))
+                    elif isinstance(error,aiohttp.ClientConnectorCertificateError):
+                        navigation_failure=FetchResult('network_error',reason='The website certificate could not be verified. Its certificate may be expired, incomplete, or issued by an untrusted authority.')
+                    elif isinstance(error,aiohttp.ClientError):
+                        navigation_failure=FetchResult('network_error',reason='The website connection, DNS, or TLS negotiation failed.')
                     elif isinstance(error,ValueError):navigation_failure=FetchResult('error',reason='The page response could not be read.')
                     else:navigation_failure=FetchResult('network_error',reason='The page could not be reached. Its server, DNS, or TLS connection may be unavailable.')
                 await route.abort()
@@ -299,6 +314,7 @@ class Fetcher:
                 return result
             except UnsafeDestination as error:return FetchResult('unsafe_url',reason=str(error))
             except asyncio.TimeoutError:return FetchResult('timeout',reason='The website could not be reached before the timeout.')
+            except aiohttp.ClientConnectorCertificateError:return FetchResult('network_error',reason='The website certificate could not be verified. Its certificate may be expired, incomplete, or issued by an untrusted authority.')
             except aiohttp.ClientError:return FetchResult('network_error',reason='The website connection, DNS, or TLS negotiation failed.')
             except DownloadTooLarge as error:return FetchResult('too_large',reason=str(error))
             except ValueError as error:

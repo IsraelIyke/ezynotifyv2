@@ -165,6 +165,8 @@ There is no undetectable mode and no CAPTCHA bypass. Use public APIs/feeds or ar
 
 Only public HTTP(S) destinations on ports 80/443 are supported. Private/reserved destinations, credentialed URLs and unsafe redirects are blocked. All browser HTTP traffic passes through an IP-validating transport; service workers and WebSockets are disabled. Browser POST requests are blocked, so sites needing POST-based data APIs may require an official feed/API integration.
 
+Windows workers validate TLS with the native system trust store, including certificate-chain completion. Certificate and hostname verification remain enabled. Certificate failures are reported as connection errors, independently of document/text size limits.
+
 Rendering is bounded: 120 requests, 20 MB per HTML/text/feed document, 3 MB for other resources, a 40 MB browser response budget, 2 million readable text characters, five scroll steps, one configured iframe, and open shadow roots. Full text is retained for keyword scanning and snapshots; large replacement sections use bounded diff alignment and sampled AI excerpts. Limits report whether the download or readable text is too large. A selector reduces extracted text, but cannot reduce the initial HTML download. Closed shadow roots, login sessions, arbitrary click flows and unlimited scrolling are not supported. Specify a target selector for slowly loading pages; text stability is a heuristic, not proof that every background request finished.
 
 Up to 50 monitors per chat are allowed. A worker claims 20 due monitors per pass. For substantial volume or consistently low-latency checks, replace the Actions worker with a persistent browser service while keeping the same database contracts.
