@@ -33,14 +33,21 @@ test('privacy requests authorize the operator and require confirmed, isolated er
       assert.equal((await db.query("select count(*)::int n from ezynotify where \"telegramID\"='123'")).rows[0].n,1);
       assert.equal((await action('erase','','wrong-token')).error,'expired_confirmation');
       await db.query("update privacy_outbox set lease_owner='privacy-sender',lease_until=now()+interval '2 minutes' where request_id=$1",[id]);
-      assert.equal((await action('erase','',token)).error,'privacy_delivery_busy');
+      assert.equal((await action('erase','',token)).queued,true);
+      assert.equal((await db.query('select erase_queued_at is not null queued from privacy_requests where id=$1',[id])).rows[0].queued,true);
+      assert.equal((await action('cancel_erasure')).cancelled,true);
+      assert.equal((await db.query('select erase_token from privacy_requests where id=$1',[id])).rows[0].erase_token,null);
+      token=(await action('preview')).token;
       await db.exec('update privacy_outbox set lease_owner=null,lease_until=null');
       await db.exec("insert into runtime_locks(name,owner,expires_at) values('worker','running-worker',now()+interval '1 hour')");
-      assert.equal((await action('erase','',token)).error,'worker_busy');
+      assert.equal((await action('erase','','wrong-token')).error,'expired_confirmation');
+      assert.equal((await action('erase','',token)).queued,true);
+      assert.equal((await db.query('select process_privacy_erasures() result')).rows[0].result.waiting,1);
       await db.exec("delete from runtime_locks where name='worker'");
     });
     await t.test('confirmed erasure removes active records but preserves other users',async()=>{
-      const result=await action('erase','',token);assert.equal(result.erased,true);
+      const result=(await db.query('select process_privacy_erasures() result')).rows[0].result;assert.equal(result.erased,1);
+      assert.equal((await db.query('select process_privacy_erasures() result')).rows[0].result.erased,0);
       for(const table of ['bot_users','bot_preferences','bot_sessions'])assert.equal((await db.query(`select count(*)::int n from ${table} where chat_id='123'`)).rows[0].n,0);
       assert.equal((await db.query('select count(*)::int n from monitor_events')).rows[0].n,0);
       assert.equal((await db.query('select count(*)::int n from notification_outbox')).rows[0].n,0);
@@ -78,9 +85,25 @@ test('privacy requests authorize the operator and require confirmed, isolated er
       assert.ok((await db.query("select payload from privacy_outbox where request_id=$1 and destination='admin' order by id desc limit 1",[correction])).rows[0].payload.text.includes('&lt;this&gt;'));
       assert.equal((await db.query("select privacy_action($1,'999','correct','{\"is_admin\":\"true\"}','','') result",[correction])).rows[0].result.error,'invalid_fields');
     });
+    await t.test('expired or replaced queued consent cannot erase data',async()=>{
+      await db.exec("insert into bot_users(chat_id) values('789');insert into runtime_locks(name,owner,expires_at) values('worker','test-worker',now()+interval '1 hour')");
+      const queuedId=(await db.query("select request_bot_privacy('789','deletion') id")).rows[0].id;
+      const apply=async(action,token='')=>(await db.query("select privacy_action($1,'999',$2,'',$3,'') result",[queuedId,action,token])).rows[0].result;
+      let preview=await apply('preview');assert.equal((await apply('erase',preview.token)).queued,true);
+      await db.query("update privacy_requests set erase_expires_at=now()-interval '1 second' where id=$1",[queuedId]);
+      await db.query('select process_privacy_erasures()');
+      let state=(await db.query('select erase_queued_at,active_erased_at from privacy_requests where id=$1',[queuedId])).rows[0];
+      assert.equal(state.erase_queued_at,null);assert.equal(state.active_erased_at,null);
+      preview=await apply('preview');assert.equal((await apply('erase',preview.token)).queued,true);
+      await apply('preview');
+      assert.equal((await db.query('select process_privacy_erasures() result')).rows[0].result.erased,0);
+      assert.equal((await db.query("select count(*)::int n from bot_users where chat_id='789'")).rows[0].n,1);
+      await db.exec("delete from runtime_locks where name='worker'");
+    });
     await t.test('public roles cannot invoke erasure or read admin tables',async()=>{
       await db.exec('set role anon');
       await assert.rejects(db.query("select privacy_action(1,'999','erase','','','')"));
+      await assert.rejects(db.query('select process_privacy_erasures()'));
       await assert.rejects(db.query('select * from privacy_admin_settings'));
       await db.exec('reset role');
     });

@@ -21,11 +21,26 @@ function fixture(){
     if(args.p_action==='erase'){row.active_erased_at='2026-10-17';return {erased:true};}
     return {ok:true};
   }};
-  const bot=createPrivacyAdmin({db,telegram:async(method,body)=>{messages.push([method,body]);return {};}});
+  const options={ackFailure:false,queueErasure:false};
+  const rpc=db.rpc;db.rpc=async(name,args)=>args.p_action==='erase'&&options.queueErasure?{queued:true}:rpc(name,args);
+  const bot=createPrivacyAdmin({db,telegram:async(method,body)=>{if(method==='answerCallbackQuery'&&options.ackFailure)throw Error('Expired callback');messages.push([method,body]);return {};}});
   const click=(data,actor=999)=>bot({update_id:++uid,callback_query:{id:String(uid),from:{id:actor},message:{message_id:10,chat:{id:actor,type:'private'}},data}});
   const send=text=>bot({update_id:++uid,message:{from:{id:999},chat:{id:999,type:'private'},text}});
-  return {click,send,messages,actions,sessions,row,audit};
+  return {click,send,messages,actions,sessions,row,audit,options};
 }
+
+test('busy deletion shows queued rather than claiming erasure and offers cancellation',async()=>{
+  const f=fixture();f.options.queueErasure=true;f.row.erase_queued_at='2026-10-17';
+  await f.click('pv:erase:2:confirmed-token');
+  assert.ok(f.messages.at(-1)[1].text.includes('No data was erased yet'));
+  assert.ok(f.messages.at(-1)[1].reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='pv:cancel_erasure:2'));
+  await f.click('pv:cancel_erasure:2');assert.equal(f.actions.at(-1)[1].p_action,'cancel_erasure');
+});
+
+test('callback acknowledgement failure does not prevent confirmed deletion',async()=>{
+  const f=fixture();f.options.ackFailure=true;
+  await f.click('pv:erase:2:confirmed-token');assert.equal(f.actions.at(-1)[1].p_action,'erase');
+});
 
 test('prepared access outcome requires an export and explicit confirmation without typing',async()=>{
   const f=fixture();f.row.kind='access';

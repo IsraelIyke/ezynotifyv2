@@ -194,6 +194,8 @@ The `/privacy` command and dashboard button explain responsible monitoring, robo
 
 ### Privacy operator bot
 
+Confirmed erasure waits automatically when a worker, user edit or privacy delivery is busy. The minute-by-minute privacy scheduler retries for up to 24 hours and notifies the operator when it succeeds or stops. The request screen offers **Cancel queued deletion**. Opening a new deletion preview invalidates earlier queued consent; expired consent requires a new confirmation. Acknowledging a Telegram callback is best effort so expired callback acknowledgements cannot block the actual action.
+
 Each request shows its next step. Use **Finish request** to review a default outcome and confirm without typing; **Edit wording** and **More options** retain custom responses. Access/correction defaults require a recorded export/correction first. After active erasure, the backup/provider checklist offers an explicit operator attestation when no other service-controlled copies remain, or a custom note when copies remain. Prepared wording never bypasses deletion confirmation or marks an unperformed action complete. When an access request blocks erasure, a button opens that request directly.
 
 Privacy requests use the separate Keywords Admin bot (`PRIVACY_BOT_TOKEN`), with a dedicated `ezynotify-privacy` webhook protected by `PRIVACY_WEBHOOK_SECRET`. Set the service-only `privacy_admin_settings` row to the intended private destination and operator Telegram ID; callbacks require both to match. The main bot sends responses to requesters. Website failure diagnostics continue through `ADMIN_BOT_TOKEN`.

@@ -10,6 +10,7 @@ Deno.serve(async(req:Request)=>{
   const userTelegram=createTelegram(envRequired(env,'BOT_TOKEN'));
   if(dispatch){
     try{
+      await db.rpc('process_privacy_erasures',{p_limit:5});
       const sendFile=async(chat:string,content:string,caption:string,filename:string)=>{
         const data=new FormData();data.set('chat_id',chat);data.set('caption',caption);
         data.set('document',new Blob([content],{type:'application/json'}),filename);

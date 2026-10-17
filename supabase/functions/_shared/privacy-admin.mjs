@@ -20,7 +20,7 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
   async function list(chat,page=0,mid,closed=false){
     page=Math.max(0,Math.min(10000,Number(page)||0));
     const rows=await db.request(`privacy_requests?status=${closed?'eq.completed':'in.(pending,in_review)'}&order=${closed?'completed_at.desc':'created_at.asc'}&limit=11&offset=${page*10}`);
-    const buttons=(rows||[]).slice(0,10).map(r=>[button(`#${r.id} · ${r.kind} · ${r.active_erased_at?'active data erased':r.status}`,`pv:view:${r.id}`)]);
+    const buttons=(rows||[]).slice(0,10).map(r=>[button(`#${r.id} · ${r.kind} · ${r.erase_queued_at?'deletion queued':r.active_erased_at?'active data erased':r.status}`,`pv:view:${r.id}`)]);
     if(page>0)buttons.push([button('← Previous',`pv:${closed?'closed':'list'}:${page-1}`)]);
     if(rows?.length>10)buttons.push([button('Next →',`pv:${closed?'closed':'list'}:${page+1}`)]);
     buttons.push([button(closed?'Open requests':'Recent closed requests',closed?'pv:list:0':'pv:closed:0')]);
@@ -38,7 +38,8 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
       if(r.kind==='access')buttons.push([button('Send account/settings export',`pv:export:${id}`)]);
       if(r.kind==='correction')buttons.push([button('Apply app-profile correction',`pv:correct:${id}`)]);
       if(r.kind==='deletion'){
-        buttons.push([button(r.active_erased_at?'Check for new account data…':'Delete user data…',`pv:preview:${id}`)]);
+        if(r.erase_queued_at)buttons.push([button('Cancel queued deletion',`pv:cancel_erasure:${id}`)]);
+        else buttons.push([button(r.active_erased_at?'Check for new account data…':'Delete user data…',`pv:preview:${id}`)]);
         if(r.active_erased_at)buttons.push([button('Backup/provider checklist',`pv:handling:${id}`)]);
       }
       if(r.kind!=='deletion'||(r.active_erased_at&&r.external_review_note))buttons.push([button('Finish request',`pv:outcome:${id}`)]);
@@ -48,7 +49,7 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
     if(failed)buttons.push([button('Retry failed responses',`pv:retry_delivery:${id}`)]);
     buttons.push(...back);
     const info=`<b>Privacy request #${html(id)}</b>\nType: ${html(r.kind)}\nAccount: <code>${html(r.chat_id)}</code>\nReceived: ${html(r.created_at)}\nState: ${html(r.status)}\nActive data erased: ${r.active_erased_at?'Yes':'No'}\nExternal handling recorded: ${r.external_review_note?'Yes':'No'}`;
-    const next=r.status==='completed'?'Finished. The final response is queued or delivered.':r.kind==='deletion'?(!r.active_erased_at?'Next: delete active account data. Any open access request must be finished first.':!r.external_review_note?'Next: confirm how backups and provider copies were handled.':'Next: finish using the prepared reply.'):'Next: carry out the request, then finish using the prepared reply.';
+    const next=r.status==='completed'?'Finished. The final response is queued or delivered.':r.erase_queued_at?'Deletion queued. Automatic retries run every minute for up to 24 hours while monitoring or delivery is busy. You will be notified when it runs or stops.':r.kind==='deletion'?(!r.active_erased_at?'Next: delete active account data. Any open access request must be finished first.':!r.external_review_note?'Next: confirm how backups and provider copies were handled.':'Next: finish using the prepared reply.'):'Next: carry out the request, then finish using the prepared reply.';
     return screen(chat,(notice?html(notice)+'\n\n':'')+info+`\nPending deliveries: ${pending} · Failed deliveries: ${failed}`+'\n\n'+html(next),buttons,mid);
   }
   return async function handle(update){
@@ -57,7 +58,7 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
     const settings=(await db.request('privacy_admin_settings?singleton=eq.true&limit=1'))?.[0];
     if(!settings?.enabled || message?.chat?.type!=='private' || actor!==String(settings.admin_user_id) || String(message.chat.id)!==String(settings.chat_id))return;
     const chat=String(message.chat.id),mid=callback?message.message_id:undefined;
-    if(callback)await telegram('answerCallbackQuery',{callback_query_id:callback.id});
+    if(callback)try{await telegram('answerCallbackQuery',{callback_query_id:callback.id});}catch{/* Expired callback acknowledgement must not block the action. */}
     const action=async(id,name,note='',token='')=>db.rpc('privacy_action',{p_id:id,p_actor:actor,p_action:name,p_note:note,p_token:token,p_event:String(update.update_id)});
     if(!callback){
       const text=message.text?.trim()||'';
@@ -85,6 +86,10 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
     if(['list','closed'].includes(verb)){await clear(actor);return list(chat,id,mid,verb==='closed');}
     if(!/^\d+$/.test(id||''))return;
     if(verb==='view'){await clear(actor);return view(chat,id,mid);}
+    if(verb==='cancel_erasure'){
+      const result=await action(id,'cancel_erasure');
+      return view(chat,id,mid,result.error?errors[result.error]:'Queued deletion cancelled. This cancellation did not erase data.');
+    }
     if(verb==='options')return screen(chat,'Optional actions. Use a custom outcome if the prepared reply does not describe what you did.',[
       [button('Write a custom outcome',`pv:complete:${id}`)],
       [button('Start manual review',`pv:review:${id}`)],
@@ -115,7 +120,7 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
       await clear(actor);const result=await action(id,'preview');
       if(result.error)return view(chat,id,mid,errors[result.error]);
       const counts=Object.entries(result.counts).map(([key,value])=>`${html(key.replaceAll('_',' '))}: ${html(value)}`).join('\n');
-      return screen(chat,`<b>Delete active user data?</b>\nRequest #${html(id)}\nAccount: <code>${html(result.account)}</code>\n\n${counts}\n\nThis permanently removes the account's monitors, snapshots, screenshots in delivery records, history, profile, preferences and drafts. The shared fetch cache is also cleared and will rebuild.\n\nLocal backups and copies held by Telegram/providers require separate handling. The request record remains open until that handling is recorded. Confirm only after reviewing the request and any retention obligations.`,
+      return screen(chat,`<b>Delete active user data?</b>\nRequest #${html(id)}\nAccount: <code>${html(result.account)}</code>\n\n${counts}\n\nThis permanently removes the account's monitors, snapshots, screenshots in delivery records, history, profile, preferences and drafts. The shared fetch cache is also cleared and will rebuild.\n\nIf monitoring or delivery is busy, your confirmation queues automatic retries for up to 24 hours. You can cancel while it is queued.\n\nLocal backups and copies held by Telegram/providers require separate handling. The request record remains open until that handling is recorded. Confirm only after reviewing the request and any retention obligations.`,
         [[button('Confirm permanent deletion',`pv:erase:${id}:${result.token}`)],[button('← Request',`pv:view:${id}`)]],mid);
     }
     if(verb==='erase'){
@@ -127,6 +132,7 @@ export function createPrivacyAdmin({db,telegram,now=()=>new Date()}){
           [button('← Deletion request',`pv:view:${id}`)]],mid);
       }
       if(result.error)return view(chat,id,mid,errors[result.error]||'Deletion did not complete.');
+      if(result.queued)return view(chat,id,mid,'Deletion queued. No data was erased yet. The bot will retry automatically when monitoring or delivery finishes; you do not need to confirm again.');
       return view(chat,id,mid,'Active user data erased. Review backup/provider handling before completing this request.');
     }
     if(verb==='review'){
